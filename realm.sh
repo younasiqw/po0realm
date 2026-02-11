@@ -83,20 +83,24 @@ install_realm() {
     fi
 
     # 创建配置目录和基础配置文件
+    # 修复核心：必须添加至少一个 endpoints 块，否则 realm 会 panic
     mkdir -p "$WORK_DIR"
     if [ ! -f "$REALM_CONFIG_PATH" ]; then
-        echo -e "${GREEN}生成默认配置 (TCP+UDP)...${PLAIN}"
+        echo -e "${GREEN}生成默认配置 (包含一条默认本地规则以防止启动崩溃)...${PLAIN}"
         cat > "$REALM_CONFIG_PATH" <<EOF
 [network]
 no_tcp = false
 use_udp = true
 
-# Endpoints
+# 默认占位规则，防止服务启动崩溃，可稍后删除
+[[endpoints]]
+listen = "127.0.0.1:20000"
+remote = "1.1.1.1:443"
 EOF
     fi
 
-    # 创建 Systemd 服务 (修复版)
-    # 去掉了 Wants=network-online.target，防止因防火墙导致启动卡死
+    # 创建 Systemd 服务
+    # 去掉了 Wants=network-online.target 防止防火墙卡死
     cat > "$REALM_SERVICE_PATH" <<EOF
 [Unit]
 Description=realm
@@ -119,6 +123,7 @@ EOF
     echo -e "${GREEN}正在启动服务...${PLAIN}"
     systemctl start realm
     
+    sleep 1
     if systemctl is-active --quiet realm; then
         echo -e "${GREEN}Realm 安装并启动成功！${PLAIN}"
     else
@@ -200,6 +205,14 @@ delete_forward() {
 
     if [ "$delete_index" == "0" ] || [ -z "$delete_index" ]; then
         return
+    fi
+
+    # 检查是否删除了最后一条规则
+    if [ "$rules_count" -eq 1 ]; then
+        echo -e "${RED}警告: Realm 必须至少保留一条规则才能运行。${PLAIN}"
+        echo -e "${YELLOW}如果删除了最后一条规则，服务将无法启动。${PLAIN}"
+        read -p "是否确定清空并让服务停止? (y/n): " confirm
+        if [ "$confirm" != "y" ]; then return; fi
     fi
 
     # 使用 awk 删除指定的 block
