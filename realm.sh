@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==================================================
-# Realm 一键转发管理脚本 (自定义适配版)
+# Realm 一键转发管理脚本
 # 支持系统: Ubuntu/Debian/CentOS
 # 说明: 适配 /tmp 目录本地安装包
 # ==================================================
@@ -95,12 +95,12 @@ use_udp = true
 EOF
     fi
 
-    # 创建 Systemd 服务
+    # 创建 Systemd 服务 (修复版)
+    # 去掉了 Wants=network-online.target，防止因防火墙导致启动卡死
     cat > "$REALM_SERVICE_PATH" <<EOF
 [Unit]
 Description=realm
-After=network-online.target
-Wants=network-online.target systemd-networkd-wait-online.service
+After=network.target
 
 [Service]
 Type=simple
@@ -115,9 +115,15 @@ EOF
 
     systemctl daemon-reload
     systemctl enable realm
+    
+    echo -e "${GREEN}正在启动服务...${PLAIN}"
     systemctl start realm
     
-    echo -e "${GREEN}Realm 安装并启动成功！${PLAIN}"
+    if systemctl is-active --quiet realm; then
+        echo -e "${GREEN}Realm 安装并启动成功！${PLAIN}"
+    else
+        echo -e "${RED}Realm 启动失败，请检查日志 (journalctl -u realm)${PLAIN}"
+    fi
 }
 
 # 2. 卸载 Realm
@@ -173,7 +179,6 @@ delete_forward() {
 
     # 显示列表
     i=1
-    # 暂存 grep 结果到一个临时文件以便读取，解决管道子shell变量问题
     grep -A 2 "\[\[endpoints\]\]" "$REALM_CONFIG_PATH" > /tmp/realm_rules_list.tmp
     
     while read -r line; do
