@@ -77,6 +77,7 @@ install_realm() {
 [network]
 no_tcp = false
 use_udp = true
+zero_copy = true
 
 # 默认占位规则
 [[endpoints]]
