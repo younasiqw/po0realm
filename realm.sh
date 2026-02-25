@@ -122,6 +122,7 @@ uninstall_realm() {
     rm -f "$REALM_BIN_PATH"
     rm -rf "$WORK_DIR"
     systemctl daemon-reload
+    systemctl reset-failed realm.service 2>/dev/null
     echo -e "${GREEN}Realm 已彻底卸载并删除开机自启。${PLAIN}"
 }
 
@@ -135,8 +136,18 @@ add_forward() {
     echo -e "${GREEN}=== 添加转发规则 (支持双栈) ===${PLAIN}"
     echo -e "${YELLOW}提示: 如果目标是 IPv6 地址，请输入 [地址]，例如 [2408:xxx:xxx]${PLAIN}"
     read -p "请输入本地监听端口 (例如 20000): " listen_port
+    if ! [[ "$listen_port" =~ ^[0-9]+$ ]] || [ "$listen_port" -lt 1 ] || [ "$listen_port" -gt 65535 ]; then
+        echo -e "${RED}错误: 监听端口必须是 1-65535 之间的数字！${PLAIN}"
+        return
+    fi
+    
     read -p "请输入目标 IP (例如 1.1.1.1 或 [IPv6]): " remote_ip
+    
     read -p "请输入目标端口 (例如 443): " remote_port
+    if ! [[ "$remote_port" =~ ^[0-9]+$ ]] || [ "$remote_port" -lt 1 ] || [ "$remote_port" -gt 65535 ]; then
+        echo -e "${RED}错误: 目标端口必须是 1-65535 之间的数字！${PLAIN}"
+        return
+    fi
 
     # 使用 [::] 监听实现双栈支持
     cat >> "$REALM_CONFIG_PATH" <<EOF
@@ -185,7 +196,16 @@ delete_forward() {
         read -p "是否确定清空? (y/n): " confirm
         if [ "$confirm" != "y" ]; then return; fi
     fi
-    awk -v target="$delete_index" 'BEGIN { count=0; print_block=1 } /^\[\[endpoints\]\]/ { count++; if (count == target) { print_block=0 } else { print_block=1 } } { if (print_block == 1) print $0 }' "$REALM_CONFIG_PATH" > "${REALM_CONFIG_PATH}.tmp" && mv "${REALM_CONFIG_PATH}.tmp" "$REALM_CONFIG_PATH"
+    
+    awk -v target="$delete_index" 'BEGIN { count=0; print_block=1 } /^\[\[endpoints\]\]/ { count++; if (count == target) { print_block=0 } else { print_block=1 } } { if (print_block == 1) print $0 }' "$REALM_CONFIG_PATH" > "${REALM_CONFIG_PATH}.tmp"
+    if [ -s "${REALM_CONFIG_PATH}.tmp" ]; then
+        mv "${REALM_CONFIG_PATH}.tmp" "$REALM_CONFIG_PATH"
+    else
+        echo -e "${RED}处理配置文件时发生错误，已取消删除！${PLAIN}"
+        rm -f "${REALM_CONFIG_PATH}.tmp"
+        return
+    fi
+    
     sed -i '/^$/N;/^\n$/D' "$REALM_CONFIG_PATH"
     restart_realm
     echo -e "${GREEN}规则已删除！${PLAIN}"
