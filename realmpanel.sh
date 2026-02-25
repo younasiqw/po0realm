@@ -21,7 +21,7 @@ REALM_SERVICE_PATH="/etc/systemd/system/realm.service"
 WORK_DIR="/etc/realm"
 
 PANEL_DIR="/etc/realm/panel"
-PANEL_PORT=8080
+PANEL_PORT=31337 # Web 网页端面板默认监听端口
 PANEL_SERVICE_PATH="/etc/systemd/system/realm-panel.service"
 
 [[ $EUID -ne 0 ]] && echo -e "${RED}错误: 必须使用 root 用户运行此脚本！${PLAIN}" && exit 1
@@ -147,6 +147,7 @@ install_panel() {
                     <div class="card">
                         <div class="card-title">快捷指令操作</div>
                         <div style="display: flex; gap: 15px;">
+                            <button class="btn btn-primary btn-small" onclick="showInstallModal()">重置/安装</button>
                             <button class="btn btn-warning btn-small" onclick="apiCall('/api/sys', {action:'stop'})">停止 Realm</button>
                             <button class="btn btn-info btn-small" onclick="apiCall('/api/sys', {action:'restart'})">重启 Realm</button>
                         </div>
@@ -302,6 +303,24 @@ install_panel() {
 
         function changeAuth() {
             apiCall('/api/sys', {action:'auth', u:document.getElementById('new-u').value, p:document.getElementById('new-p').value}).then(d=>{ showM("成功", "凭证已修改，请重新登录！"); setTimeout(logout, 2000); });
+        }
+        
+        // 网页端在线安装功能
+        function showInstallModal() {
+            document.getElementById('m-title').innerText = '安装/重置 Realm';
+            document.getElementById('m-body').innerHTML = `
+                <div style="text-align:center; margin: 15px 0;">
+                    <button class="btn btn-primary" onclick="doWebInstall()">🌐 自动拉取并安装</button>
+                </div>
+                <p style="font-size:12px; color:#666; text-align:center;">提示：自动拉取 Github 预设版本覆盖安装，并启动服务。</p>
+            `;
+            document.getElementById('m-footer').innerHTML = `<button class="btn btn-small" style="background:#ddd;color:#333;" onclick="closeM()">取消</button>`;
+            openM();
+        }
+        function doWebInstall() {
+            document.getElementById('m-body').innerHTML = '<div style="text-align:center;"><p>正在后台下载并安装...</p><div class="loader" style="display:block;"></div></div>';
+            document.getElementById('m-footer').innerHTML = '';
+            apiCall('/api/install', {}, 'POST').then(d => { showM("安装结果", d.msg); });
         }
 
         function openM() { document.getElementById('g-modal').style.display='flex'; setTimeout(()=>document.getElementById('g-modal-box').classList.add('show'), 10); }
@@ -482,6 +501,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             elif data['action'] == 'auth':
                 with open(AUTH_FILE, 'w') as f: json.dump({"username": data['u'], "password": data['p']}, f)
         
+        elif self.path == '/api/install':
+            cmd = "wget -N --no-check-certificate https://github.com/zhboner/realm/releases/download/v2.6.0/realm-x86_64-unknown-linux-musl.tar.gz -O /tmp/realm.tar.gz && tar -xvf /tmp/realm.tar.gz -C /tmp/ && mv /tmp/realm /usr/local/bin/realm && chmod +x /usr/local/bin/realm && systemctl enable realm && systemctl restart realm"
+            subprocess.run(cmd, shell=True)
+            res = {"msg": "网页端安装/重置 Realm 核心成功，服务已启动！"}
+            
         elif self.path == '/api/node':
             nodes = read_config()
             nodes.append({'remark': data['r'], 'inIp': data['inIp'], 'inPort': str(data['inPort']), 'outIp': data['outIp'], 'outPort': str(data['outPort'])})
@@ -517,7 +541,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         write_config(nodes)
         self.send_response(200); self.end_headers(); self.wfile.write(b'{"msg":"ok"}')
 
-with socketserver.TCPServer(("", 8080), Handler) as httpd: httpd.serve_forever()
+with socketserver.TCPServer(("", 31337), Handler) as httpd: httpd.serve_forever()
 EOF
 
     # 3. 创建面板 Systemd 服务
@@ -551,14 +575,17 @@ install_realm() {
         echo -e "${GREEN}选择安装方式:${PLAIN}"
         echo -e " 1. 在线下载安装 (使用预设 v2.6.0 musl 链接)"
         echo -e " 2. 本地文件安装 (请先将 $FILE_NAME 上传至 /tmp 目录)"
-        read -p "请输入选项 [1-2]: " install_method
+        echo -e " 3. 跳过当前 Realm 安装 (直接部署网页端，后续在网页内安装)"
+        read -p "请输入选项 [1-3]: " install_method
         if [ "$install_method" == "1" ]; then
             wget -N --no-check-certificate "$DOWNLOAD_URL" -O "$FILE_NAME"
             tar -xvf "$FILE_NAME"; chmod +x realm; mv realm "$REALM_BIN_PATH"; rm -f "$FILE_NAME"
         elif [ "$install_method" == "2" ] && [ -f "$LOCAL_PKG_PATH" ]; then
             tar -xvf "$LOCAL_PKG_PATH" -C /tmp/; chmod +x /tmp/realm; mv /tmp/realm "$REALM_BIN_PATH"
+        elif [ "$install_method" == "3" ]; then
+            echo -e "${YELLOW}已跳过 Realm 核心安装。${PLAIN}"
         else
-            echo -e "${RED}安装失败！${PLAIN}"; return
+            echo -e "${RED}安装失败或无效选项！${PLAIN}"; return
         fi
     fi
 
@@ -586,10 +613,20 @@ ExecStart=${REALM_BIN_PATH} -c ${REALM_CONFIG_PATH}
 WantedBy=multi-user.target
 EOF
 
-    systemctl daemon-reload; systemctl enable realm
+    systemctl daemon-reload
+    
+    if [ "$install_method" != "3" ] && [ -f "$REALM_BIN_PATH" ]; then
+        systemctl enable realm
+    fi
+
     install_panel
-    systemctl start realm
-    echo -e "${GREEN}Realm 核心及面板安装启动完成！${PLAIN}"
+    
+    if [ "$install_method" != "3" ] && [ -f "$REALM_BIN_PATH" ]; then
+        systemctl start realm
+        echo -e "${GREEN}Realm 核心及面板安装启动完成！${PLAIN}"
+    else
+        echo -e "${GREEN}Web 面板已安装！(Realm 核心未运行，请进入网页端面板安装)${PLAIN}"
+    fi
 }
 
 uninstall_realm() {
@@ -599,7 +636,6 @@ uninstall_realm() {
     rm -rf "$WORK_DIR"
     systemctl daemon-reload; systemctl reset-failed realm.service realm-panel.service 2>/dev/null
     
-    # 修改这里的语法错误，直接使用 Bash 原生命令
     iptables -F REALM_ACCT 2>/dev/null
     ip6tables -F REALM_ACCT 2>/dev/null
     
