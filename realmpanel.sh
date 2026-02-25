@@ -365,7 +365,7 @@ def sync_iptables():
     nodes = read_config()
     os.system("iptables -N REALM_ACCT 2>/dev/null; iptables -C INPUT -j REALM_ACCT 2>/dev/null || iptables -I INPUT -j REALM_ACCT; iptables -C OUTPUT -j REALM_ACCT 2>/dev/null || iptables -I OUTPUT -j REALM_ACCT")
     os.system("ip6tables -N REALM_ACCT 2>/dev/null; ip6tables -C INPUT -j REALM_ACCT 2>/dev/null || ip6tables -I INPUT -j REALM_ACCT; ip6tables -C OUTPUT -j REALM_ACCT 2>/dev/null || ip6tables -I OUTPUT -j REALM_ACCT")
-    os.system("iptables -F REALM_ACCT; ip6tables -F REALM_ACCT")
+    os.system("iptables -F REALM_ACCT; ip6tables -F REALM_ACCT 2>/dev/null")
     for n in nodes:
         p = n['inPort']
         os.system(f"iptables -A REALM_ACCT -p tcp --sport {p}; iptables -A REALM_ACCT -p udp --sport {p}; iptables -A REALM_ACCT -p tcp --dport {p}; iptables -A REALM_ACCT -p udp --dport {p}")
@@ -598,7 +598,11 @@ uninstall_realm() {
     rm -f "$PANEL_SERVICE_PATH" "$REALM_SERVICE_PATH" "$REALM_BIN_PATH"
     rm -rf "$WORK_DIR"
     systemctl daemon-reload; systemctl reset-failed realm.service realm-panel.service 2>/dev/null
-    os.system("iptables -F REALM_ACCT 2>/dev/null; ip6tables -F REALM_ACCT 2>/dev/null") # 清理遗留探针
+    
+    # 修改这里的语法错误，直接使用 Bash 原生命令
+    iptables -F REALM_ACCT 2>/dev/null
+    ip6tables -F REALM_ACCT 2>/dev/null
+    
     echo -e "${GREEN}Realm 及面板已彻底卸载！${PLAIN}"
 }
 
