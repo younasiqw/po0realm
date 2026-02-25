@@ -147,7 +147,7 @@ install_panel() {
                     <div class="card">
                         <div class="card-title">快捷指令操作</div>
                         <div style="display: flex; gap: 15px;">
-                            <button class="btn btn-primary btn-small" onclick="showInstallModal()">重置/安装</button>
+                            <button class="btn btn-primary btn-small" onclick="showInstallModal()">安装Realm</button>
                             <button class="btn btn-warning btn-small" onclick="apiCall('/api/sys', {action:'stop'}).then(d=>{showM('成功', '指令已下发'); setTimeout(loadData, 500);})">停止 Realm</button>
                             <button class="btn btn-info btn-small" onclick="apiCall('/api/sys', {action:'restart'}).then(d=>{showM('成功', '指令已下发'); setTimeout(loadData, 500);})">重启 Realm</button>
                         </div>
@@ -157,7 +157,7 @@ install_panel() {
                     <div class="card">
                         <div class="card-title">➕ 添加转发节点</div>
                         <div class="inline-form">
-                            <div class="form-group"><label>备注信息</label><input type="text" id="add-r" placeholder="如: 日本流媒体"></div>
+                            <div class="form-group"><label>备注信息</label><input type="text" id="add-r" placeholder="如: 阿姆斯特朗回旋加速喷气式阿姆斯特朗炮"></div>
                             <div class="form-group"><label>入口地址</label><input type="text" id="add-in" placeholder="[::]"></div>
                             <div class="form-group"><label>监听端口</label><input type="number" id="add-in-p" placeholder="20000"></div>
                             <div class="form-group"><label>目标地址</label><input type="text" id="add-out" placeholder="1.1.1.1"></div>
