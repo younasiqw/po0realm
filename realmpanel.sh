@@ -116,7 +116,7 @@ install_panel() {
             <h2>Realm 管理面板</h2>
             <div class="form-group"><label>用户名</label><input type="text" id="username"></div>
             <div class="form-group"><label>密码</label><input type="password" id="password"></div>
-            <button class="btn btn-primary" onclick="login()">安全登录</button>
+            <button class="btn btn-primary" onclick="login()">✈开始起飞</button>
             <p id="login-error" style="color: var(--danger-color); margin-top: 15px; display: none;">凭证错误！</p>
         </div>
     </div>
