@@ -392,7 +392,7 @@ def read_config():
             if line.startswith('# remark:'): node['remark'] = line.split(':', 1)[1].strip()
             elif line.startswith('listen'):
                 val = line.split('=')[1].strip().strip('"')
-                node['inIp'] = val.rsplit(':', 1)[0] + ']' if ']:' in val else val.rsplit(':', 1)[0]
+                node['inIp'] = val.rsplit(':', 1)[0]
                 node['inPort'] = val.rsplit(':', 1)[1]
             elif line.startswith('remote'):
                 val = line.split('=')[1].strip().strip('"')
@@ -507,7 +507,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 c_labels.append(t.strftime("%H:00"))
                 c_data.append(round(t_data["hourly"].get(hr_str, 0) / 1073741824, 2))
                 
-            is_active = (os.system("systemctl is-active --quiet realm") == 0)
+            is_active = (subprocess.run("systemctl is-active --quiet realm", shell=True).returncode == 0)
             res = {"nodes": nodes, "total_gb": round(total_b / 1073741824, 2), "chart_labels": c_labels, "chart_data": c_data, "is_running": is_active}
             self.send_response(200); self.send_header('Content-type', 'application/json'); self.end_headers()
             self.wfile.write(json.dumps(res).encode())
@@ -538,14 +538,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif self.path == '/api/install':
             install_type = data.get('type')
             if install_type == 'network':
-                cmd = "systemctl stop realm; wget -N --no-check-certificate https://github.com/zhboner/realm/releases/download/v2.6.0/realm-x86_64-unknown-linux-musl.tar.gz -O /tmp/realm.tar.gz && tar -xvf /tmp/realm.tar.gz -C /tmp/ && mv -f /tmp/realm /usr/local/bin/realm && chmod +x /usr/local/bin/realm && systemctl daemon-reload && systemctl enable realm && systemctl restart realm"
+                cmd = "systemctl stop realm; wget -N --no-check-certificate https://github.com/zhboner/realm/releases/download/v2.6.0/realm-x86_64-unknown-linux-musl.tar.gz -O /tmp/realm.tar.gz; tar -xvf /tmp/realm.tar.gz -C /tmp/; mv -f /tmp/realm /usr/local/bin/realm; chmod +x /usr/local/bin/realm; systemctl daemon-reload; systemctl enable realm; systemctl restart realm"
                 subprocess.run(cmd, shell=True)
                 res = {"msg": "网络自动拉取安装成功，服务已启动！"}
             elif install_type == 'upload':
                 b64_content = data.get('content').split(',')[1]
                 with open("/tmp/realm_upload.tar.gz", "wb") as f:
                     f.write(base64.b64decode(b64_content))
-                cmd = "systemctl stop realm; tar -xvf /tmp/realm_upload.tar.gz -C /tmp/ && mv -f /tmp/realm /usr/local/bin/realm && chmod +x /usr/local/bin/realm && systemctl daemon-reload && systemctl enable realm && systemctl restart realm"
+                cmd = "systemctl stop realm; tar -xvf /tmp/realm_upload.tar.gz -C /tmp/; mv -f /tmp/realm /usr/local/bin/realm; chmod +x /usr/local/bin/realm; systemctl daemon-reload; systemctl enable realm; systemctl restart realm"
                 subprocess.run(cmd, shell=True)
                 res = {"msg": "本地上传包已解压并覆盖安装成功，服务已启动！"}
             
