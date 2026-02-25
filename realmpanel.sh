@@ -132,7 +132,7 @@ install_panel() {
         <div class="main-content">
             <div class="header">
                 <div style="font-size: 20px; font-weight: bold; color: #2c3e50;">Realm Dashboard</div>
-                <div><span>状态: <span class="status-badge" id="status-badge">运行中</span></span> <button class="btn btn-danger btn-small" style="margin-left:15px;" onclick="logout()">退出登录</button></div>
+                <div><span>状态: <span class="status-badge" id="status-badge">获取中</span></span> <button class="btn btn-danger btn-small" style="margin-left:15px;" onclick="logout()">退出登录</button></div>
             </div>
             <div class="content-body">
                 <div id="view-dashboard" class="view-section active">
@@ -148,8 +148,8 @@ install_panel() {
                         <div class="card-title">快捷指令操作</div>
                         <div style="display: flex; gap: 15px;">
                             <button class="btn btn-primary btn-small" onclick="showInstallModal()">重置/安装</button>
-                            <button class="btn btn-warning btn-small" onclick="apiCall('/api/sys', {action:'stop'})">停止 Realm</button>
-                            <button class="btn btn-info btn-small" onclick="apiCall('/api/sys', {action:'restart'})">重启 Realm</button>
+                            <button class="btn btn-warning btn-small" onclick="apiCall('/api/sys', {action:'stop'}).then(d=>{showM('成功', '指令已下发'); setTimeout(loadData, 500);})">停止 Realm</button>
+                            <button class="btn btn-info btn-small" onclick="apiCall('/api/sys', {action:'restart'}).then(d=>{showM('成功', '指令已下发'); setTimeout(loadData, 500);})">重启 Realm</button>
                         </div>
                     </div>
                 </div>
@@ -224,6 +224,15 @@ install_panel() {
 
         function loadData() {
             apiCall('/api/data', null, 'GET').then(d => {
+                const badge = document.getElementById('status-badge');
+                if(d.is_running) {
+                    badge.innerText = '运行中';
+                    badge.style.background = 'var(--primary-color)';
+                } else {
+                    badge.innerText = '未运行';
+                    badge.style.background = 'var(--danger-color)';
+                }
+
                 // 渲染图表
                 if(!chartInst) {
                     chartInst = new Chart(document.getElementById('trafficChart').getContext('2d'), {
@@ -321,7 +330,7 @@ install_panel() {
         function doWebInstall() {
             document.getElementById('m-body').innerHTML = '<div style="text-align:center;"><p>正在后台下载并安装...</p><div class="loader" style="display:block;"></div></div>';
             document.getElementById('m-footer').innerHTML = '';
-            apiCall('/api/install', { type: 'network' }, 'POST').then(d => { showM("安装结果", d.msg); });
+            apiCall('/api/install', { type: 'network' }, 'POST').then(d => { showM("安装结果", d.msg); setTimeout(loadData, 1000); });
         }
         function showUploadForm() {
             document.getElementById('m-title').innerText = '手动上传安装包';
@@ -342,7 +351,7 @@ install_panel() {
             const reader = new FileReader();
             reader.onload = function(e) {
                 const base64Data = e.target.result;
-                apiCall('/api/install', { type: 'upload', content: base64Data }, 'POST').then(d => { showM("安装结果", d.msg); });
+                apiCall('/api/install', { type: 'upload', content: base64Data }, 'POST').then(d => { showM("安装结果", d.msg); setTimeout(loadData, 1000); });
             };
             reader.readAsDataURL(fileInput.files[0]);
         }
@@ -498,7 +507,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 c_labels.append(t.strftime("%H:00"))
                 c_data.append(round(t_data["hourly"].get(hr_str, 0) / 1073741824, 2))
                 
-            res = {"nodes": nodes, "total_gb": round(total_b / 1073741824, 2), "chart_labels": c_labels, "chart_data": c_data}
+            is_active = (os.system("systemctl is-active --quiet realm") == 0)
+            res = {"nodes": nodes, "total_gb": round(total_b / 1073741824, 2), "chart_labels": c_labels, "chart_data": c_data, "is_running": is_active}
             self.send_response(200); self.send_header('Content-type', 'application/json'); self.end_headers()
             self.wfile.write(json.dumps(res).encode())
 
@@ -528,14 +538,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif self.path == '/api/install':
             install_type = data.get('type')
             if install_type == 'network':
-                cmd = "wget -N --no-check-certificate https://github.com/zhboner/realm/releases/download/v2.6.0/realm-x86_64-unknown-linux-musl.tar.gz -O /tmp/realm.tar.gz && tar -xvf /tmp/realm.tar.gz -C /tmp/ && mv /tmp/realm /usr/local/bin/realm && chmod +x /usr/local/bin/realm && systemctl enable realm && systemctl restart realm"
+                cmd = "systemctl stop realm; wget -N --no-check-certificate https://github.com/zhboner/realm/releases/download/v2.6.0/realm-x86_64-unknown-linux-musl.tar.gz -O /tmp/realm.tar.gz && tar -xvf /tmp/realm.tar.gz -C /tmp/ && mv -f /tmp/realm /usr/local/bin/realm && chmod +x /usr/local/bin/realm && systemctl daemon-reload && systemctl enable realm && systemctl restart realm"
                 subprocess.run(cmd, shell=True)
                 res = {"msg": "网络自动拉取安装成功，服务已启动！"}
             elif install_type == 'upload':
                 b64_content = data.get('content').split(',')[1]
                 with open("/tmp/realm_upload.tar.gz", "wb") as f:
                     f.write(base64.b64decode(b64_content))
-                cmd = "tar -xvf /tmp/realm_upload.tar.gz -C /tmp/ && mv /tmp/realm /usr/local/bin/realm && chmod +x /usr/local/bin/realm && systemctl enable realm && systemctl restart realm"
+                cmd = "systemctl stop realm; tar -xvf /tmp/realm_upload.tar.gz -C /tmp/ && mv -f /tmp/realm /usr/local/bin/realm && chmod +x /usr/local/bin/realm && systemctl daemon-reload && systemctl enable realm && systemctl restart realm"
                 subprocess.run(cmd, shell=True)
                 res = {"msg": "本地上传包已解压并覆盖安装成功，服务已启动！"}
             
