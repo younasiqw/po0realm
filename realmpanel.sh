@@ -307,12 +307,13 @@ install_panel() {
         
         // 网页端在线安装功能
         function showInstallModal() {
-            document.getElementById('m-title').innerText = '安装/重置 Realm';
+            document.getElementById('m-title').innerText = '选择 Realm 安装方式';
             document.getElementById('m-body').innerHTML = `
-                <div style="text-align:center; margin: 15px 0;">
-                    <button class="btn btn-primary" onclick="doWebInstall()">🌐 自动拉取并安装</button>
+                <div style="display: flex; gap: 15px; justify-content: center; margin: 20px 0;">
+                    <button class="btn btn-primary" onclick="doWebInstall()">🌐 网络一键安装</button>
+                    <button class="btn btn-info" onclick="showUploadForm()">📁 手动上传安装包</button>
                 </div>
-                <p style="font-size:12px; color:#666; text-align:center;">提示：自动拉取 Github 预设版本覆盖安装，并启动服务。</p>
+                <p style="font-size:12px; color:#666; text-align:center;">提示：网络安装将自动拉取 Github 预设版本。</p>
             `;
             document.getElementById('m-footer').innerHTML = `<button class="btn btn-small" style="background:#ddd;color:#333;" onclick="closeM()">取消</button>`;
             openM();
@@ -320,7 +321,30 @@ install_panel() {
         function doWebInstall() {
             document.getElementById('m-body').innerHTML = '<div style="text-align:center;"><p>正在后台下载并安装...</p><div class="loader" style="display:block;"></div></div>';
             document.getElementById('m-footer').innerHTML = '';
-            apiCall('/api/install', {}, 'POST').then(d => { showM("安装结果", d.msg); });
+            apiCall('/api/install', { type: 'network' }, 'POST').then(d => { showM("安装结果", d.msg); });
+        }
+        function showUploadForm() {
+            document.getElementById('m-title').innerText = '手动上传安装包';
+            document.getElementById('m-body').innerHTML = `
+                <p style="margin-bottom:10px; font-size:13px; color:#666;">请选择 realm-x86_64-unknown-linux-musl.tar.gz 文件</p>
+                <input type="file" id="upload-file" accept=".gz,.tar.gz" style="margin-bottom: 20px; width:100%;">
+                <div id="upload-status" style="display:none; color:var(--primary-color); font-weight:bold; text-align:center;">正在上传并安装，请稍候...</div>
+            `;
+            document.getElementById('m-footer').innerHTML = `
+                <button class="btn btn-small" style="background:#ddd; color:#333;" onclick="closeM()">取消</button>
+                <button class="btn btn-primary btn-small" onclick="doUploadInstall()">开始上传并安装</button>
+            `;
+        }
+        function doUploadInstall() {
+            const fileInput = document.getElementById('upload-file');
+            if (fileInput.files.length === 0) { alert('请先选择一个文件！'); return; }
+            document.getElementById('upload-status').style.display = 'block';
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const base64Data = e.target.result;
+                apiCall('/api/install', { type: 'upload', content: base64Data }, 'POST').then(d => { showM("安装结果", d.msg); });
+            };
+            reader.readAsDataURL(fileInput.files[0]);
         }
 
         function openM() { document.getElementById('g-modal').style.display='flex'; setTimeout(()=>document.getElementById('g-modal-box').classList.add('show'), 10); }
@@ -340,7 +364,7 @@ EOF
 
     # ================= Python 3 后端服务 =================
     cat > "$PANEL_DIR/server.py" << 'EOF'
-import http.server, socketserver, json, subprocess, os, threading, time, datetime, socket, uuid, re
+import http.server, socketserver, json, subprocess, os, threading, time, datetime, socket, uuid, re, base64
 
 TOKEN = ""
 CFG_PATH = "/etc/realm/config.toml"
@@ -502,9 +526,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 with open(AUTH_FILE, 'w') as f: json.dump({"username": data['u'], "password": data['p']}, f)
         
         elif self.path == '/api/install':
-            cmd = "wget -N --no-check-certificate https://github.com/zhboner/realm/releases/download/v2.6.0/realm-x86_64-unknown-linux-musl.tar.gz -O /tmp/realm.tar.gz && tar -xvf /tmp/realm.tar.gz -C /tmp/ && mv /tmp/realm /usr/local/bin/realm && chmod +x /usr/local/bin/realm && systemctl enable realm && systemctl restart realm"
-            subprocess.run(cmd, shell=True)
-            res = {"msg": "网页端安装/重置 Realm 核心成功，服务已启动！"}
+            install_type = data.get('type')
+            if install_type == 'network':
+                cmd = "wget -N --no-check-certificate https://github.com/zhboner/realm/releases/download/v2.6.0/realm-x86_64-unknown-linux-musl.tar.gz -O /tmp/realm.tar.gz && tar -xvf /tmp/realm.tar.gz -C /tmp/ && mv /tmp/realm /usr/local/bin/realm && chmod +x /usr/local/bin/realm && systemctl enable realm && systemctl restart realm"
+                subprocess.run(cmd, shell=True)
+                res = {"msg": "网络自动拉取安装成功，服务已启动！"}
+            elif install_type == 'upload':
+                b64_content = data.get('content').split(',')[1]
+                with open("/tmp/realm_upload.tar.gz", "wb") as f:
+                    f.write(base64.b64decode(b64_content))
+                cmd = "tar -xvf /tmp/realm_upload.tar.gz -C /tmp/ && mv /tmp/realm /usr/local/bin/realm && chmod +x /usr/local/bin/realm && systemctl enable realm && systemctl restart realm"
+                subprocess.run(cmd, shell=True)
+                res = {"msg": "本地上传包已解压并覆盖安装成功，服务已启动！"}
             
         elif self.path == '/api/node':
             nodes = read_config()
