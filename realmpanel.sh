@@ -429,8 +429,9 @@ def traffic_daemon():
         time.sleep(60)
         try:
             try:
-                with open(TRAF_FILE, 'r') as f: data = json.load(f)
-            except:
+                with open(TRAF_FILE, 'r') as f:
+                    data = json.load(f)
+            except Exception:
                 data = {"month": "", "nodes": {}, "hourly": {}}
             
             now = datetime.datetime.now()
@@ -444,18 +445,21 @@ def traffic_daemon():
             # 解析 iptables 字节数
             bytes_added = {}
             for cmd in ["iptables -nxvL REALM_ACCT 2>/dev/null", "ip6tables -nxvL REALM_ACCT 2>/dev/null"]:
-                out = os.popen(cmd).read()
-                for line in out.split('\n'):
-                    parts = line.split()
-                    # 跳过表头，确保 parts[0] 是数字 (即 pkts 数量)
-                    if len(parts) > 6 and parts[0].isdigit():
-                        try:
-                            b_count = int(parts[1])
-                            m = re.search(r'(?:spt|dpt|spts|dpts)[:\s]*(\d+)', line)
-                            if m and b_count > 0:
-                                p = m.group(1)
-                                bytes_added[p] = bytes_added.get(p, 0) + b_count
-                except: pass
+                try:
+                    out = subprocess.check_output(cmd, shell=True).decode()
+                    for line in out.split('\n'):
+                        parts = line.split()
+                        if len(parts) > 6 and parts[0].isdigit():
+                            try:
+                                b_count = int(parts[1])
+                                m = re.search(r'(?:spt|dpt|spts|dpts)[:\s]*(\d+)', line)
+                                if m and b_count > 0:
+                                    p = m.group(1)
+                                    bytes_added[p] = bytes_added.get(p, 0) + b_count
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
             
             # 探针归零
             os.system("iptables -Z REALM_ACCT 2>/dev/null; ip6tables -Z REALM_ACCT 2>/dev/null")
@@ -472,8 +476,10 @@ def traffic_daemon():
             cutoff = now - datetime.timedelta(hours=48)
             data["hourly"] = {k:v for k,v in data["hourly"].items() if datetime.datetime.strptime(k, "%Y-%m-%d %H") > cutoff}
             
-            with open(TRAF_FILE, 'w') as f: json.dump(data, f)
-        except Exception as e: print("Traffic daemon error:", e)
+            with open(TRAF_FILE, 'w') as f:
+                json.dump(data, f)
+        except Exception as e:
+            print("Traffic daemon error:", e)
 
 # 启动后台流量线程
 threading.Thread(target=traffic_daemon, daemon=True).start()
@@ -703,7 +709,7 @@ show_status() {
 while true; do
     clear
     echo -e "============================================"
-    echo -e "      Realm 转发管理脚本 (面板完全体)       "
+    echo -e "             Realm 转发管理脚本              "
     echo -e "============================================"
     show_status
     echo -e "--------------------------------------------"
