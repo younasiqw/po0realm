@@ -158,7 +158,7 @@ install_panel() {
                         <div class="card-title">➕ 添加转发节点</div>
                         <div class="inline-form">
                             <div class="form-group"><label>备注信息</label><input type="text" id="add-r" placeholder="如: 阿姆斯特朗回旋加速喷气式阿姆斯特朗炮"></div>
-                            <div class="form-group"><label>入口地址</label><input type="text" id="add-in" placeholder="[::]"></div>
+                            <div class="form-group"><label>入口地址</label><input type="text" id="add-in" value="[::]" placeholder="[::]"></div>
                             <div class="form-group"><label>监听端口</label><input type="number" id="add-in-p" placeholder="20000"></div>
                             <div class="form-group"><label>目标地址</label><input type="text" id="add-out" placeholder="1.1.1.1"></div>
                             <div class="form-group"><label>目标端口</label><input type="number" id="add-out-p" placeholder="443"></div>
@@ -237,7 +237,7 @@ install_panel() {
                 if(!chartInst) {
                     chartInst = new Chart(document.getElementById('trafficChart').getContext('2d'), {
                         type: 'line', data: { labels: d.chart_labels, datasets: [{ label: '节点总流量', data: d.chart_data, borderColor: '#4CAF50', backgroundColor: 'rgba(76, 175, 80, 0.1)', fill: true }] },
-                        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { title: c => '当前时间：' + c[0].label, label: c => '已消耗流量：' + c.parsed.y + ' GB' } } } }
+                        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { title: c => '当前时间：' + c[0].label, label: c => '已消耗流量：' + c.parsed.y + ' GB' } } }, scales: { y: { min: 0, beginAtZero: true } } }
                     });
                 } else {
                     chartInst.data.labels = d.chart_labels; chartInst.data.datasets[0].data = d.chart_data; chartInst.update();
@@ -428,7 +428,11 @@ def traffic_daemon():
     while True:
         time.sleep(60)
         try:
-            with open(TRAF_FILE, 'r') as f: data = json.load(f)
+            try:
+                with open(TRAF_FILE, 'r') as f: data = json.load(f)
+            except:
+                data = {"month": "", "nodes": {}, "hourly": {}}
+            
             now = datetime.datetime.now()
             current_month = now.strftime("%Y-%m")
             current_hour = now.strftime("%Y-%m-%d %H")
@@ -439,21 +443,21 @@ def traffic_daemon():
             
             # 解析 iptables 字节数
             bytes_added = {}
-            for cmd in ["iptables -nxvL REALM_ACCT", "ip6tables -nxvL REALM_ACCT 2>/dev/null"]:
+            for cmd in ["iptables -nxvL REALM_ACCT 2>/dev/null", "ip6tables -nxvL REALM_ACCT 2>/dev/null"]:
                 try:
                     out = subprocess.check_output(cmd, shell=True).decode()
                     for line in out.split('\n'):
                         parts = line.split()
                         if len(parts) > 6:
                             b_count = int(parts[1])
-                            m = re.search(r'(?:spt|dpt):(\d+)', line)
+                            m = re.search(r'(?:spt|dpt|spts|dpts)[:\s]*(\d+)', line)
                             if m and b_count > 0:
                                 p = m.group(1)
                                 bytes_added[p] = bytes_added.get(p, 0) + b_count
                 except: pass
             
             # 探针归零
-            os.system("iptables -Z REALM_ACCT; ip6tables -Z REALM_ACCT 2>/dev/null")
+            os.system("iptables -Z REALM_ACCT 2>/dev/null; ip6tables -Z REALM_ACCT 2>/dev/null")
             
             # 累加存储
             hour_total = 0
