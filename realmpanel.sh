@@ -444,11 +444,12 @@ def traffic_daemon():
             # 解析 iptables 字节数
             bytes_added = {}
             for cmd in ["iptables -nxvL REALM_ACCT 2>/dev/null", "ip6tables -nxvL REALM_ACCT 2>/dev/null"]:
-                try:
-                    out = subprocess.check_output(cmd, shell=True).decode()
-                    for line in out.split('\n'):
-                        parts = line.split()
-                        if len(parts) > 6:
+                out = os.popen(cmd).read()
+                for line in out.split('\n'):
+                    parts = line.split()
+                    # 跳过表头，确保 parts[0] 是数字 (即 pkts 数量)
+                    if len(parts) > 6 and parts[0].isdigit():
+                        try:
                             b_count = int(parts[1])
                             m = re.search(r'(?:spt|dpt|spts|dpts)[:\s]*(\d+)', line)
                             if m and b_count > 0:
@@ -499,7 +500,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             total_b = 0
             for n in nodes:
                 b = t_data["nodes"].get(n["inPort"], 0)
-                n["gb"] = round(b / 1073741824, 2)
+                n["gb"] = round(b / 1073741824, 3)
                 total_b += b
                 
             # 组装 24 小时图表
@@ -509,10 +510,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 t = now - datetime.timedelta(hours=i)
                 hr_str = t.strftime("%Y-%m-%d %H")
                 c_labels.append(t.strftime("%H:00"))
-                c_data.append(round(t_data["hourly"].get(hr_str, 0) / 1073741824, 2))
+                c_data.append(round(t_data["hourly"].get(hr_str, 0) / 1073741824, 3))
                 
             is_active = (subprocess.run("systemctl is-active --quiet realm", shell=True).returncode == 0)
-            res = {"nodes": nodes, "total_gb": round(total_b / 1073741824, 2), "chart_labels": c_labels, "chart_data": c_data, "is_running": is_active}
+            res = {"nodes": nodes, "total_gb": round(total_b / 1073741824, 3), "chart_labels": c_labels, "chart_data": c_data, "is_running": is_active}
             self.send_response(200); self.send_header('Content-type', 'application/json'); self.end_headers()
             self.wfile.write(json.dumps(res).encode())
 
