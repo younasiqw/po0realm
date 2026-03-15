@@ -597,6 +597,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         write_config(nodes)
         self.send_response(200); self.end_headers(); self.wfile.write(b'{"msg":"ok"}')
 
+socketserver.ThreadingTCPServer.allow_reuse_address = True
 with socketserver.ThreadingTCPServer(("", PANEL_PORT_PLACEHOLDER), Handler) as httpd: httpd.serve_forever()
 EOF
     
