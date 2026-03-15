@@ -23,6 +23,7 @@ WORK_DIR="/etc/realm"
 PANEL_DIR="/etc/realm/panel"
 PANEL_PORT=31337 # Web 网页端面板默认监听端口
 PANEL_SERVICE_PATH="/etc/systemd/system/realm-panel.service"
+BACKUP_DIR="/root/realmpanelconfig" # 备份文件夹路径
 
 [[ $EUID -ne 0 ]] && echo -e "${RED}错误: 必须使用 root 用户运行此脚本！${PLAIN}" && exit 1
 
@@ -37,6 +38,7 @@ install_panel() {
     fi
 
     mkdir -p "$PANEL_DIR"
+    mkdir -p "$BACKUP_DIR" # 创建备份文件夹
 
     # 初始化鉴权与流量文件
     if [ ! -f "$PANEL_DIR/auth.json" ]; then
@@ -595,8 +597,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         write_config(nodes)
         self.send_response(200); self.end_headers(); self.wfile.write(b'{"msg":"ok"}')
 
-with socketserver.TCPServer(("", 31337), Handler) as httpd: httpd.serve_forever()
+with socketserver.ThreadingTCPServer(("", PANEL_PORT_PLACEHOLDER), Handler) as httpd: httpd.serve_forever()
 EOF
+    
+    # 自动替换上面脚本中的占位端口为当前环境变量端口
+    sed -i "s/PANEL_PORT_PLACEHOLDER/$PANEL_PORT/" "$PANEL_DIR/server.py"
 
     # 3. 创建面板 Systemd 服务
     cat > "$PANEL_SERVICE_PATH" <<EOF
@@ -701,6 +706,70 @@ uninstall_realm() {
     echo -e "${GREEN}Realm 及面板已彻底卸载！${PLAIN}"
 }
 
+change_panel_port() {
+    read -p "请输入新的 Web 面板端口 (1-65535): " new_port
+    if [[ "$new_port" =~ ^[0-9]+$ ]] && [ "$new_port" -ge 1 ] && [ "$new_port" -le 65535 ]; then
+        # 1. 修改脚本自身的环境变量，以便下次执行和状态显示正常
+        sed -i "s/^PANEL_PORT=[0-9]*/PANEL_PORT=$new_port/" "$0"
+        
+        # 2. 修改正在运行的 Python 面板端口并重启服务
+        if [ -f "$PANEL_DIR/server.py" ]; then
+            sed -i "s/ThreadingTCPServer((\"\", [0-9]*)/ThreadingTCPServer((\"\", $new_port)/" "$PANEL_DIR/server.py"
+            systemctl restart realm-panel
+        fi
+        
+        PANEL_PORT=$new_port
+        echo -e "${GREEN}Web 面板端口已成功修改为: $new_port${PLAIN}"
+    else
+        echo -e "${RED}输入无效，端口必须是 1-65535 之间的数字！${PLAIN}"
+    fi
+}
+
+backup_nodes() {
+    mkdir -p "$BACKUP_DIR"
+    if [ ! -f "$REALM_CONFIG_PATH" ]; then
+        echo -e "${RED}未找到 Realm 配置文件 (/etc/realm/config.toml)，请先添加节点！${PLAIN}"
+        return
+    fi
+    local backup_name="config_backup_$(date +%Y%m%d_%H%M%S).toml"
+    cp "$REALM_CONFIG_PATH" "$BACKUP_DIR/$backup_name"
+    echo -e "${GREEN}成功备份当前节点信息至: $BACKUP_DIR/$backup_name${PLAIN}"
+}
+
+restore_nodes() {
+    if [ ! -d "$BACKUP_DIR" ] || [ -z "$(ls -A "$BACKUP_DIR")" ]; then
+        echo -e "${RED}未在 $BACKUP_DIR 中找到任何备份文件！${PLAIN}"
+        return
+    fi
+    
+    echo -e "${SKYBLUE}==========================================${PLAIN}"
+    echo -e "请选择要恢复的备份文件："
+    local i=1
+    local files=()
+    for f in "$BACKUP_DIR"/*.toml; do
+        files[$i]=$f
+        echo -e " ${GREEN}${i}.${PLAIN} $(basename "$f")"
+        ((i++))
+    done
+    echo -e "${SKYBLUE}==========================================${PLAIN}"
+    
+    read -p "请输入对应的序号 (1-$((i-1))，按0取消): " sel
+    if [ "$sel" == "0" ]; then
+        echo -e "${YELLOW}已取消恢复操作。${PLAIN}"
+        return
+    fi
+    
+    if [[ "$sel" =~ ^[0-9]+$ ]] && [ "$sel" -ge 1 ] && [ "$sel" -lt $i ]; then
+        cp "${files[$sel]}" "$REALM_CONFIG_PATH"
+        systemctl restart realm
+        # 同时重启面板以便同步重置流量探针规则
+        systemctl restart realm-panel
+        echo -e "${GREEN}节点信息已成功恢复，且核心与面板服务均已自动重启生效！${PLAIN}"
+    else
+        echo -e "${RED}输入无效！${PLAIN}"
+    fi
+}
+
 show_status() {
     if systemctl is-active --quiet realm; then echo -e "Realm 状态: ${GREEN}运行中${PLAIN}"; else echo -e "Realm 状态: ${RED}未运行${PLAIN}"; fi
     if systemctl is-active --quiet realm-panel; then echo -e "Web 面板:   ${GREEN}运行中 (端口: $PANEL_PORT)${PLAIN}"; else echo -e "Web 面板:   ${RED}未运行${PLAIN}"; fi
@@ -715,12 +784,18 @@ while true; do
     echo -e "--------------------------------------------"
     echo -e "  1. 安装 Realm 转发并开启 Web 面板"
     echo -e "  2. 彻底卸载 Realm 及其 Web 面板"
+    echo -e "  3. 修改网页端面板端口"
+    echo -e "  4. 备份节点信息"
+    echo -e "  5. 恢复节点信息"
     echo -e "  0. 退出脚本"
     echo -e "============================================"
-    read -p " 请输入选项 [0-2]: " num
+    read -p " 请输入选项 [0-5]: " num
     case "$num" in
         1) install_realm ;;
         2) uninstall_realm ;;
+        3) change_panel_port ;;
+        4) backup_nodes ;;
+        5) restore_nodes ;;
         0) exit 0 ;;
         *) echo -e "${RED}无效选项${PLAIN}" ;;
     esac
