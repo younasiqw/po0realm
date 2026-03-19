@@ -2,7 +2,7 @@
 
 # ==================================================
 # Realm 一键转发管理脚本 (Web面板 终极完全体)
-# 说明: 真实TOML读写、真实TCP测速、iptables精准单端口流量、Token鉴权
+# 说明: 真实TOML读写、真实TCP测速、iptables精准单端口流量、Token鉴权、流量阈值熔断
 # ==================================================
 
 RED='\033[0;31m'
@@ -21,7 +21,12 @@ REALM_SERVICE_PATH="/etc/systemd/system/realm.service"
 WORK_DIR="/etc/realm"
 
 PANEL_DIR="/etc/realm/panel"
-PANEL_PORT=31337 # Web 网页端面板默认监听端口
+# 避免脚本自修改，端口配置提取到独立文件
+if [ -f "/etc/realm/panel.env" ]; then
+    source /etc/realm/panel.env
+else
+    PANEL_PORT=31337
+fi
 PANEL_SERVICE_PATH="/etc/systemd/system/realm-panel.service"
 BACKUP_DIR="/root/realmpanelconfig" # 备份文件夹路径
 
@@ -39,13 +44,17 @@ install_panel() {
 
     mkdir -p "$PANEL_DIR"
     mkdir -p "$BACKUP_DIR" # 创建备份文件夹
+    
+    # 初始化环境文件
+    echo "PANEL_PORT=$PANEL_PORT" > /etc/realm/panel.env
 
     # 初始化鉴权与流量文件
     if [ ! -f "$PANEL_DIR/auth.json" ]; then
         echo '{"username": "admin", "password": "admin"}' > "$PANEL_DIR/auth.json"
     fi
     if [ ! -f "$PANEL_DIR/traffic.json" ]; then
-        echo '{"month": "", "nodes": {}, "hourly": {}}' > "$PANEL_DIR/traffic.json"
+        # 新增 quotas 和 disabled 字段用于流量熔断
+        echo '{"month": "", "nodes": {}, "hourly": {}, "quotas": {}, "disabled": []}' > "$PANEL_DIR/traffic.json"
     fi
 
     # ================= HTML 前端页面 =================
@@ -139,6 +148,16 @@ install_panel() {
             <div class="content-body">
                 <div id="view-dashboard" class="view-section active">
                     <div class="grid-2">
+                        <div class="stat-card" style="padding: 15px;">
+                            <div class="stat-label">服务器 CPU / 内存使用率</div>
+                            <div class="stat-value" id="sys-res" style="font-size: 28px;">0% / 0%</div>
+                        </div>
+                        <div class="stat-card" style="padding: 15px;">
+                            <div class="stat-label">服务器负载 (Load Average)</div>
+                            <div class="stat-value" id="sys-load" style="font-size: 28px;">0.00 0.00 0.00</div>
+                        </div>
+                    </div>
+                    <div class="grid-2">
                         <div class="stat-card"><div class="stat-label">总计使用流量 (当月)</div><div class="stat-value" id="total-traffic">0 GB</div></div>
                         <div class="stat-card"><div class="stat-label">已启用转发节点</div><div class="stat-value" id="node-count">0 个</div></div>
                     </div>
@@ -164,6 +183,7 @@ install_panel() {
                             <div class="form-group"><label>监听端口</label><input type="number" id="add-in-p" placeholder="20000"></div>
                             <div class="form-group"><label>目标地址</label><input type="text" id="add-out" placeholder="1.1.1.1"></div>
                             <div class="form-group"><label>目标端口</label><input type="number" id="add-out-p" placeholder="443"></div>
+                            <div class="form-group"><label>流量上限(GB, 0无限制)</label><input type="number" id="add-quota" placeholder="0" value="0"></div>
                             <button class="btn btn-primary" style="margin-bottom: 20px;" onclick="addNode()">确认添加</button>
                         </div>
                     </div>
@@ -171,11 +191,18 @@ install_panel() {
                     <div class="node-grid" id="node-list"></div>
                 </div>
                 <div id="view-settings" class="view-section">
-                    <div class="card" style="max-width: 400px;">
+                    <div class="card" style="max-width: 400px; margin-bottom: 20px;">
                         <div class="card-title">修改登录凭证</div>
                         <div class="form-group"><label>新用户名</label><input type="text" id="new-u"></div>
                         <div class="form-group"><label>新密码</label><input type="password" id="new-p"></div>
                         <button class="btn btn-primary" onclick="changeAuth()">保存修改</button>
+                    </div>
+                    <div class="card" style="max-width: 400px;">
+                        <div class="card-title">配置备份与恢复</div>
+                        <button class="btn btn-info" style="width: 100%; margin-bottom: 15px;" onclick="downloadBackup()">⬇ 下载节点配置备份 (TOML)</button>
+                        <hr style="border: 0; border-top: 1px dashed #eee; margin-bottom: 15px;">
+                        <div class="form-group"><label>上传备份文件恢复 (.toml)</label><input type="file" id="upload-backup" accept=".toml"></div>
+                        <button class="btn btn-warning" onclick="restoreBackup()">⬆ 确认上传并恢复</button>
                     </div>
                 </div>
             </div>
@@ -235,6 +262,10 @@ install_panel() {
                     badge.style.background = 'var(--danger-color)';
                 }
 
+                // 渲染系统状态
+                document.getElementById('sys-res').innerText = `${d.sys_stat.cpu}% / ${d.sys_stat.mem}%`;
+                document.getElementById('sys-load').innerText = d.sys_stat.load;
+
                 // 渲染图表
                 if(!chartInst) {
                     chartInst = new Chart(document.getElementById('trafficChart').getContext('2d'), {
@@ -253,13 +284,16 @@ install_panel() {
                 const nl = document.getElementById('node-list');
                 nl.innerHTML = '';
                 d.nodes.forEach(n => {
+                    const statusTag = n.disabled ? `<span style="color:var(--danger-color);font-weight:bold;font-size:12px;margin-left:5px;">[已超限停机]</span>` : '';
+                    const quotaStr = n.quota > 0 ? n.quota + ' GB' : '无限制';
                     nl.innerHTML += `
                         <div class="node-card">
-                            <div class="node-header"><span class="node-remark">${n.remark || '未命名节点'}</span><span class="node-traffic">${n.gb} GB</span></div>
+                            <div class="node-header"><span class="node-remark">${n.remark || '未命名节点'}</span>
+                            <span class="node-traffic">${n.gb} GB / ${quotaStr}${statusTag}</span></div>
                             <div class="node-info-line"><strong>入口：</strong>${n.inIp}:${n.inPort}</div>
                             <div class="node-info-line"><strong>目标：</strong>${n.outIp}:${n.outPort}</div>
                             <div class="node-actions">
-                                <button class="btn btn-info btn-small" onclick="editNode('${n.inPort}', '${n.remark}', '${n.outIp}', '${n.outPort}')">编辑</button>
+                                <button class="btn btn-info btn-small" onclick="editNode('${n.inPort}', '${n.remark}', '${n.outIp}', '${n.outPort}', '${n.quota}')">编辑</button>
                                 <button class="btn btn-warning btn-small" onclick="diagNode('${n.outIp}', ${n.outPort})">诊断</button>
                                 <button class="btn btn-danger btn-small" onclick="delNode('${n.inPort}')">删除</button>
                             </div>
@@ -269,7 +303,14 @@ install_panel() {
         }
 
         function addNode() {
-            const data = { r:document.getElementById('add-r').value, inIp:document.getElementById('add-in').value||'[::]', inPort:document.getElementById('add-in-p').value, outIp:document.getElementById('add-out').value, outPort:document.getElementById('add-out-p').value };
+            const data = { 
+                r:document.getElementById('add-r').value, 
+                inIp:document.getElementById('add-in').value||'[::]', 
+                inPort:document.getElementById('add-in-p').value, 
+                outIp:document.getElementById('add-out').value, 
+                outPort:document.getElementById('add-out-p').value,
+                quota: document.getElementById('add-quota').value || 0
+            };
             if(!data.inPort || !data.outIp || !data.outPort) return showM("提示", "信息不全！");
             apiCall('/api/node', data, 'POST').then(d => { showM("成功", d.msg); loadData(); });
         }
@@ -282,17 +323,18 @@ install_panel() {
         }
         function doDel(port) { apiCall('/api/node', {port:port}, 'DELETE').then(d=>{ closeM(); loadData(); }); }
 
-        function editNode(port, r, outIp, outPort) {
-            document.getElementById('m-title').innerText = '编辑节点 (仅支持修改目标与备注)';
+        function editNode(port, r, outIp, outPort, quota) {
+            document.getElementById('m-title').innerText = '编辑节点';
             document.getElementById('m-body').innerHTML = `
                 <div class="form-group"><label>备注</label><input type="text" id="e-r" value="${r}"></div>
                 <div class="form-group"><label>目标地址</label><input type="text" id="e-ip" value="${outIp}"></div>
-                <div class="form-group"><label>目标端口</label><input type="number" id="e-p" value="${outPort}"></div>`;
+                <div class="form-group"><label>目标端口</label><input type="number" id="e-p" value="${outPort}"></div>
+                <div class="form-group"><label>流量上限(GB, 0无限制)</label><input type="number" id="e-q" value="${quota}"></div>`;
             document.getElementById('m-footer').innerHTML = `<button class="btn btn-small" style="background:#ddd;color:#333;" onclick="closeM()">取消</button> <button class="btn btn-primary btn-small" onclick="doEdit('${port}')">保存</button>`;
             openM();
         }
         function doEdit(port) {
-            apiCall('/api/node', { port:port, r:document.getElementById('e-r').value, outIp:document.getElementById('e-ip').value, outPort:document.getElementById('e-p').value }, 'PUT')
+            apiCall('/api/node', { port:port, r:document.getElementById('e-r').value, outIp:document.getElementById('e-ip').value, outPort:document.getElementById('e-p').value, quota: document.getElementById('e-q').value }, 'PUT')
             .then(d=>{ closeM(); loadData(); });
         }
 
@@ -358,6 +400,25 @@ install_panel() {
             reader.readAsDataURL(fileInput.files[0]);
         }
 
+        function downloadBackup() {
+            apiCall('/api/sys', {action:'backup'}).then(d => {
+                const blob = new Blob([d.config], {type: 'text/plain'});
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = 'realm_config_backup_' + new Date().getTime() + '.toml';
+                a.click(); window.URL.revokeObjectURL(url);
+            });
+        }
+        function restoreBackup() {
+            const fileInput = document.getElementById('upload-backup');
+            if (fileInput.files.length === 0) { showM('错误', '请先选择要恢复的 TOML 配置文件！'); return; }
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                apiCall('/api/sys', {action:'restore', content: e.target.result}).then(d => { showM('成功', d.msg); setTimeout(loadData, 1000); });
+            };
+            reader.readAsText(fileInput.files[0]);
+        }
+
         function openM() { document.getElementById('g-modal').style.display='flex'; setTimeout(()=>document.getElementById('g-modal-box').classList.add('show'), 10); }
         function closeM() { document.getElementById('g-modal-box').classList.remove('show'); setTimeout(()=>document.getElementById('g-modal').style.display='none', 200); }
         function showM(t, text) {
@@ -382,10 +443,30 @@ CFG_PATH = "/etc/realm/config.toml"
 AUTH_FILE = "/etc/realm/panel/auth.json"
 TRAF_FILE = "/etc/realm/panel/traffic.json"
 
+# 全局读写锁，防止多线程文件损坏
+data_lock = threading.Lock()
+
+def get_sys_stat():
+    try:
+        load = " ".join([str(round(x, 2)) for x in os.getloadavg()])
+        with open('/proc/meminfo', 'r') as f: lines = f.readlines()
+        total = int(lines[0].split()[1]); avail = int(lines[2].split()[1])
+        mem = round((total - avail) / total * 100, 1)
+        with open('/proc/stat', 'r') as f: cpu_lines = f.readline().split()[1:]
+        idle = float(cpu_lines[3]); total_cpu = sum(float(x) for x in cpu_lines)
+        time.sleep(0.1)
+        with open('/proc/stat', 'r') as f: cpu_lines2 = f.readline().split()[1:]
+        idle2 = float(cpu_lines2[3]); total_cpu2 = sum(float(x) for x in cpu_lines2)
+        cpu = round(100 * (1 - (idle2 - idle) / (total_cpu2 - total_cpu)), 1) if total_cpu2 > total_cpu else 0
+        return {"cpu": cpu, "mem": mem, "load": load}
+    except:
+        return {"cpu": 0, "mem": 0, "load": "0.00 0.00 0.00"}
+
 def read_config():
-    if not os.path.exists(CFG_PATH): return []
-    nodes = []
-    with open(CFG_PATH, 'r') as f: content = f.read()
+    with data_lock:
+        if not os.path.exists(CFG_PATH): return []
+        nodes = []
+        with open(CFG_PATH, 'r') as f: content = f.read()
     blocks = content.split('[[endpoints]]')
     for b in blocks[1:]:
         node = {'remark': '', 'inIp': '', 'inPort': '', 'outIp': '', 'outPort': ''}
@@ -410,41 +491,47 @@ def write_config(nodes):
         out += f"remote = \"{n['outIp']}:{n['outPort']}\"\n"
         if n.get('remark'): out += f"# remark: {n['remark']}\n"
         out += "\n"
-    with open(CFG_PATH, 'w') as f: f.write(out)
+    with data_lock:
+        with open(CFG_PATH, 'w') as f: f.write(out)
     subprocess.run("systemctl restart realm", shell=True)
-    sync_iptables() # 每次修改配置后同步探针规则
+    sync_iptables()
 
-# --------- iptables 流量探针核心逻辑 ---------
 def sync_iptables():
     nodes = read_config()
     os.system("iptables -N REALM_ACCT 2>/dev/null; iptables -C INPUT -j REALM_ACCT 2>/dev/null || iptables -I INPUT -j REALM_ACCT; iptables -C OUTPUT -j REALM_ACCT 2>/dev/null || iptables -I OUTPUT -j REALM_ACCT")
     os.system("ip6tables -N REALM_ACCT 2>/dev/null; ip6tables -C INPUT -j REALM_ACCT 2>/dev/null || ip6tables -I INPUT -j REALM_ACCT; ip6tables -C OUTPUT -j REALM_ACCT 2>/dev/null || ip6tables -I OUTPUT -j REALM_ACCT")
     os.system("iptables -F REALM_ACCT; ip6tables -F REALM_ACCT 2>/dev/null")
     for n in nodes:
-        p = n['inPort']
-        os.system(f"iptables -A REALM_ACCT -p tcp --sport {p}; iptables -A REALM_ACCT -p udp --sport {p}; iptables -A REALM_ACCT -p tcp --dport {p}; iptables -A REALM_ACCT -p udp --dport {p}")
-        os.system(f"ip6tables -A REALM_ACCT -p tcp --sport {p} 2>/dev/null; ip6tables -A REALM_ACCT -p udp --sport {p} 2>/dev/null; ip6tables -A REALM_ACCT -p tcp --dport {p} 2>/dev/null; ip6tables -A REALM_ACCT -p udp --dport {p} 2>/dev/null")
+        try:
+            p = int(n['inPort']) # RCE修复：强制转为数字
+            os.system(f"iptables -A REALM_ACCT -p tcp --sport {p}; iptables -A REALM_ACCT -p udp --sport {p}; iptables -A REALM_ACCT -p tcp --dport {p}; iptables -A REALM_ACCT -p udp --dport {p}")
+            os.system(f"ip6tables -A REALM_ACCT -p tcp --sport {p} 2>/dev/null; ip6tables -A REALM_ACCT -p udp --sport {p} 2>/dev/null; ip6tables -A REALM_ACCT -p tcp --dport {p} 2>/dev/null; ip6tables -A REALM_ACCT -p udp --dport {p} 2>/dev/null")
+        except: pass
 
 def traffic_daemon():
     sync_iptables()
     while True:
         time.sleep(60)
         try:
-            try:
-                with open(TRAF_FILE, 'r') as f:
-                    data = json.load(f)
-            except Exception:
-                data = {"month": "", "nodes": {}, "hourly": {}}
-            
+            with data_lock:
+                try:
+                    with open(TRAF_FILE, 'r') as f: data = json.load(f)
+                except Exception:
+                    data = {"month": "", "nodes": {}, "hourly": {}, "quotas": {}, "disabled": []}
+                
+                # 初始化新字段兼容老数据
+                if "quotas" not in data: data["quotas"] = {}
+                if "disabled" not in data: data["disabled"] = []
+                
             now = datetime.datetime.now()
             current_month = now.strftime("%Y-%m")
             current_hour = now.strftime("%Y-%m-%d %H")
             
-            # 每月1号清空
             if data.get("month") != current_month:
-                data = {"month": current_month, "nodes": {}, "hourly": {}}
+                data["month"] = current_month; data["nodes"] = {}; data["hourly"] = {}; data["disabled"] = []
+                # 月初清空规则
+                os.system("iptables -D INPUT -j DROP 2>/dev/null") 
             
-            # 解析 iptables 字节数
             bytes_added = {}
             for cmd in ["iptables -nxvL REALM_ACCT 2>/dev/null", "ip6tables -nxvL REALM_ACCT 2>/dev/null"]:
                 try:
@@ -458,15 +545,11 @@ def traffic_daemon():
                                 if m and b_count > 0:
                                     p = m.group(1)
                                     bytes_added[p] = bytes_added.get(p, 0) + b_count
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
+                            except Exception: pass
+                except Exception: pass
             
-            # 探针归零
             os.system("iptables -Z REALM_ACCT 2>/dev/null; ip6tables -Z REALM_ACCT 2>/dev/null")
             
-            # 累加存储
             hour_total = 0
             for p, b in bytes_added.items():
                 data["nodes"][p] = data["nodes"].get(p, 0) + b
@@ -474,19 +557,31 @@ def traffic_daemon():
                 
             data["hourly"][current_hour] = data["hourly"].get(current_hour, 0) + hour_total
             
-            # 清理 48 小时前的历史数据防止文件膨胀
             cutoff = now - datetime.timedelta(hours=48)
             data["hourly"] = {k:v for k,v in data["hourly"].items() if datetime.datetime.strptime(k, "%Y-%m-%d %H") > cutoff}
             
-            with open(TRAF_FILE, 'w') as f:
-                json.dump(data, f)
-        except Exception as e:
-            print("Traffic daemon error:", e)
+            # === 流量阈值熔断检查 ===
+            disabled_list = data.get("disabled", [])
+            for p_str, b in data["nodes"].items():
+                q_gb = data.get("quotas", {}).get(p_str, 0)
+                if q_gb > 0 and b >= q_gb * 1073741824:
+                    if p_str not in disabled_list:
+                        os.system(f"iptables -I INPUT -p tcp --dport {p_str} -j DROP 2>/dev/null")
+                        os.system(f"iptables -I INPUT -p udp --dport {p_str} -j DROP 2>/dev/null")
+                        data.setdefault("disabled", []).append(p_str)
+                else:
+                    if p_str in disabled_list:
+                        os.system(f"iptables -D INPUT -p tcp --dport {p_str} -j DROP 2>/dev/null")
+                        os.system(f"iptables -D INPUT -p udp --dport {p_str} -j DROP 2>/dev/null")
+                        data["disabled"].remove(p_str)
 
-# 启动后台流量线程
+            with data_lock:
+                with open(TRAF_FILE, 'w') as f: json.dump(data, f)
+        except Exception as e:
+            pass
+
 threading.Thread(target=traffic_daemon, daemon=True).start()
 
-# --------- HTTP API 服务器 ---------
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/' or self.path == '/index.html':
@@ -494,34 +589,34 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             with open('/etc/realm/panel/index.html', 'rb') as f: self.wfile.write(f.read())
             return
             
-        # 鉴权
         if self.headers.get('Authorization') != TOKEN:
             self.send_response(401); self.end_headers(); return
             
         if self.path == '/api/data':
             nodes = read_config()
-            try:
-                with open(TRAF_FILE, 'r') as f: t_data = json.load(f)
-            except: t_data = {"nodes": {}, "hourly": {}}
+            with data_lock:
+                try:
+                    with open(TRAF_FILE, 'r') as f: t_data = json.load(f)
+                except: t_data = {"nodes": {}, "hourly": {}, "quotas": {}, "disabled": []}
             
-            # 组装节点数据 (GB)
             total_b = 0
             for n in nodes:
-                b = t_data["nodes"].get(n["inPort"], 0)
+                b = t_data.get("nodes", {}).get(n["inPort"], 0)
                 n["gb"] = round(b / 1073741824, 3)
+                n["quota"] = t_data.get("quotas", {}).get(str(n["inPort"]), 0)
+                n["disabled"] = str(n["inPort"]) in t_data.get("disabled", [])
                 total_b += b
                 
-            # 组装 24 小时图表
             now = datetime.datetime.now()
             c_labels, c_data = [], []
             for i in range(23, -1, -1):
                 t = now - datetime.timedelta(hours=i)
                 hr_str = t.strftime("%Y-%m-%d %H")
                 c_labels.append(t.strftime("%H:00"))
-                c_data.append(round(t_data["hourly"].get(hr_str, 0) / 1073741824, 3))
+                c_data.append(round(t_data.get("hourly", {}).get(hr_str, 0) / 1073741824, 3))
                 
             is_active = (subprocess.run("systemctl is-active --quiet realm", shell=True).returncode == 0)
-            res = {"nodes": nodes, "total_gb": round(total_b / 1073741824, 3), "chart_labels": c_labels, "chart_data": c_data, "is_running": is_active}
+            res = {"nodes": nodes, "total_gb": round(total_b / 1073741824, 3), "chart_labels": c_labels, "chart_data": c_data, "is_running": is_active, "sys_stat": get_sys_stat()}
             self.send_response(200); self.send_header('Content-type', 'application/json'); self.end_headers()
             self.wfile.write(json.dumps(res).encode())
 
@@ -530,7 +625,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         data = json.loads(self.rfile.read(len_b).decode('utf-8')) if len_b > 0 else {}
         
         if self.path == '/api/login':
-            with open(AUTH_FILE, 'r') as f: auth = json.load(f)
+            with data_lock:
+                with open(AUTH_FILE, 'r') as f: auth = json.load(f)
             if data.get('u') == auth['username'] and data.get('p') == auth['password']:
                 global TOKEN; TOKEN = str(uuid.uuid4())
                 self.send_response(200); self.end_headers(); self.wfile.write(json.dumps({"token": TOKEN}).encode())
@@ -546,7 +642,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if data['action'] == 'stop': subprocess.run("systemctl stop realm", shell=True)
             elif data['action'] == 'restart': subprocess.run("systemctl restart realm", shell=True)
             elif data['action'] == 'auth':
-                with open(AUTH_FILE, 'w') as f: json.dump({"username": data['u'], "password": data['p']}, f)
+                with data_lock:
+                    with open(AUTH_FILE, 'w') as f: json.dump({"username": data['u'], "password": data['p']}, f)
+            elif data['action'] == 'backup':
+                with data_lock:
+                    with open(CFG_PATH, 'r') as f: res = {"msg": "ok", "config": f.read()}
+            elif data['action'] == 'restore':
+                with data_lock:
+                    with open(CFG_PATH, 'w') as f: f.write(data['content'])
+                subprocess.run("systemctl restart realm", shell=True)
+                sync_iptables()
+                res = {"msg": "配置已恢复并重启生效"}
         
         elif self.path == '/api/install':
             install_type = data.get('type')
@@ -566,13 +672,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             nodes = read_config()
             nodes.append({'remark': data['r'], 'inIp': data['inIp'], 'inPort': str(data['inPort']), 'outIp': data['outIp'], 'outPort': str(data['outPort'])})
             write_config(nodes)
+            with data_lock:
+                with open(TRAF_FILE, 'r') as f: t_data = json.load(f)
+                t_data.setdefault("quotas", {})[str(data['inPort'])] = float(data.get('quota', 0))
+                with open(TRAF_FILE, 'w') as f: json.dump(t_data, f)
             
         elif self.path == '/api/diag':
             success, delays = 0, []
             for _ in range(5):
                 try:
                     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(1.0)
-                    start = time.time(); s.connect((data['ip'], int(data['port']))); s.close()
+                    start = time.time(); s.connect((str(data['ip']), int(data['port']))); s.close() # RCE修复
                     delays.append(time.time() - start); success += 1
                 except: pass
             res = {"loss": int((5-success)/5*100), "delay": int((sum(delays)/len(delays)*1000)) if delays else 0}
@@ -588,6 +698,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if n['inPort'] == str(data['port']):
                 n['remark'], n['outIp'], n['outPort'] = data['r'], data['outIp'], str(data['outPort'])
         write_config(nodes)
+        with data_lock:
+            with open(TRAF_FILE, 'r') as f: t_data = json.load(f)
+            t_data.setdefault("quotas", {})[str(data['port'])] = float(data.get('quota', 0))
+            with open(TRAF_FILE, 'w') as f: json.dump(t_data, f)
         self.send_response(200); self.end_headers(); self.wfile.write(b'{"msg":"ok"}')
         
     def do_DELETE(self):
@@ -598,11 +712,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_response(200); self.end_headers(); self.wfile.write(b'{"msg":"ok"}')
 
 socketserver.ThreadingTCPServer.allow_reuse_address = True
-with socketserver.ThreadingTCPServer(("", PANEL_PORT_PLACEHOLDER), Handler) as httpd: httpd.serve_forever()
+
+# 动态读取面板端口，消除自修改漏洞
+serve_port = 31337
+try:
+    if os.path.exists('/etc/realm/panel.env'):
+        with open('/etc/realm/panel.env', 'r') as f:
+            for line in f:
+                if line.startswith('PANEL_PORT='): serve_port = int(line.split('=')[1].strip())
+except: pass
+
+with socketserver.ThreadingTCPServer(("", serve_port), Handler) as httpd: httpd.serve_forever()
 EOF
-    
-    # 自动替换上面脚本中的占位端口为当前环境变量端口
-    sed -i "s/PANEL_PORT_PLACEHOLDER/$PANEL_PORT/" "$PANEL_DIR/server.py"
 
     # 3. 创建面板 Systemd 服务
     cat > "$PANEL_SERVICE_PATH" <<EOF
@@ -703,6 +824,7 @@ uninstall_realm() {
     
     iptables -F REALM_ACCT 2>/dev/null
     ip6tables -F REALM_ACCT 2>/dev/null
+    iptables -D INPUT -j DROP 2>/dev/null
     
     echo -e "${GREEN}Realm 及面板已彻底卸载！${PLAIN}"
 }
@@ -710,16 +832,10 @@ uninstall_realm() {
 change_panel_port() {
     read -p "请输入新的 Web 面板端口 (1-65535): " new_port
     if [[ "$new_port" =~ ^[0-9]+$ ]] && [ "$new_port" -ge 1 ] && [ "$new_port" -le 65535 ]; then
-        # 1. 修改脚本自身的环境变量，以便下次执行和状态显示正常
-        sed -i "s/^PANEL_PORT=[0-9]*/PANEL_PORT=$new_port/" "$0"
-        
-        # 2. 修改正在运行的 Python 面板端口并重启服务
-        if [ -f "$PANEL_DIR/server.py" ]; then
-            sed -i "s/ThreadingTCPServer((\"\", [0-9]*)/ThreadingTCPServer((\"\", $new_port)/" "$PANEL_DIR/server.py"
-            systemctl restart realm-panel
-        fi
-        
+        # 写入独立配置，Python 端将自动读取
+        echo "PANEL_PORT=$new_port" > /etc/realm/panel.env
         PANEL_PORT=$new_port
+        systemctl restart realm-panel
         echo -e "${GREEN}Web 面板端口已成功修改为: $new_port${PLAIN}"
     else
         echo -e "${RED}输入无效，端口必须是 1-65535 之间的数字！${PLAIN}"
