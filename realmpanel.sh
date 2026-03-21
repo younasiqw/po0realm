@@ -11,7 +11,7 @@ YELLOW='\033[0;33m'
 SKYBLUE='\033[0;36m'
 PLAIN='\033[0m'
 
-DOWNLOAD_URL="https://github.com/zhboner/realm/releases/download/v2.6.0/realm-x86_64-unknown-linux-musl.tar.gz"
+DOWNLOAD_URL="https://github.com/zhboner/realm/releases/download/v2.9.2-2/realm-x86_64-unknown-linux-musl.tar.gz"
 FILE_NAME="realm-x86_64-unknown-linux-musl.tar.gz"
 LOCAL_PKG_PATH="/tmp/${FILE_NAME}"
 
