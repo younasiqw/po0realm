@@ -143,7 +143,18 @@ install_panel() {
         <div class="main-content">
             <div class="header">
                 <div style="font-size: 20px; font-weight: bold; color: #2c3e50;">Realm Dashboard</div>
-                <div><span>状态: <span class="status-badge" id="status-badge">获取中</span></span> <button class="btn btn-danger btn-small" style="margin-left:15px;" onclick="logout()">退出登录</button></div>
+                <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
+                    <div><span>状态: <span class="status-badge" id="status-badge">获取中</span></span> <button class="btn btn-danger btn-small" style="margin-left:15px;" onclick="logout()">退出登录</button></div>
+                    <div style="font-size: 13px; color: #555;">监控刷新: 
+                        <select id="refresh-select" onchange="changeRefresh()" style="border: 1px solid #ccc; border-radius: 4px; padding: 2px 5px; outline: none;">
+                            <option value="1000">1s</option>
+                            <option value="5000">5s</option>
+                            <option value="15000">15s</option>
+                            <option value="30000" selected>30s</option>
+                            <option value="60000">60s</option>
+                        </select>
+                    </div>
+                </div>
             </div>
             <div class="content-body">
                 <div id="view-dashboard" class="view-section active">
@@ -219,6 +230,7 @@ install_panel() {
 
     <script>
         let chartInst = null;
+        let refreshTimer = null;
         const getToken = () => localStorage.getItem('realm_token');
 
         function login() {
@@ -248,7 +260,13 @@ install_panel() {
             document.getElementById('login-wrapper').style.display='none';
             document.getElementById('app-wrapper').style.display='flex';
             loadData();
-            setInterval(loadData, 30000); // 30秒自动刷新流量
+            changeRefresh();
+        }
+
+        function changeRefresh() {
+            if(refreshTimer) clearInterval(refreshTimer);
+            const val = parseInt(document.getElementById('refresh-select').value);
+            refreshTimer = setInterval(loadData, val);
         }
 
         function loadData() {
