@@ -143,21 +143,22 @@ install_panel() {
         <div class="main-content">
             <div class="header">
                 <div style="font-size: 20px; font-weight: bold; color: #2c3e50;">Realm Dashboard</div>
-                <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
-                    <div><span>状态: <span class="status-badge" id="status-badge">获取中</span></span> <button class="btn btn-danger btn-small" style="margin-left:15px;" onclick="logout()">退出登录</button></div>
-                    <div style="font-size: 13px; color: #555;">监控刷新: 
-                        <select id="refresh-select" onchange="changeRefresh()" style="border: 1px solid #ccc; border-radius: 4px; padding: 2px 5px; outline: none;">
-                            <option value="1000">1s</option>
-                            <option value="5000">5s</option>
-                            <option value="15000">15s</option>
-                            <option value="30000" selected>30s</option>
-                            <option value="60000">60s</option>
-                        </select>
-                    </div>
-                </div>
+                <div><span>状态: <span class="status-badge" id="status-badge">获取中</span></span> <button class="btn btn-danger btn-small" style="margin-left:15px;" onclick="logout()">退出登录</button></div>
             </div>
             <div class="content-body">
                 <div id="view-dashboard" class="view-section active">
+                    <div style="display: flex; justify-content: flex-end; margin-bottom: 15px; font-size: 14px; color: #555;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <strong>服务器状态监控 刷新时间: </strong>
+                            <select id="refresh-select" onchange="changeRefresh()" style="border: 1px solid #ccc; border-radius: 4px; padding: 4px 8px; outline: none; background: white; cursor: pointer;">
+                                <option value="1000">1s</option>
+                                <option value="5000">5s</option>
+                                <option value="15000">15s</option>
+                                <option value="30000" selected>30s</option>
+                                <option value="60000">60s</option>
+                            </select>
+                        </div>
+                    </div>
                     <div class="grid-2">
                         <div class="stat-card" style="padding: 15px;">
                             <div class="stat-label">服务器 CPU / 内存使用率</div>
@@ -230,7 +231,7 @@ install_panel() {
 
     <script>
         let chartInst = null;
-        let refreshTimer = null;
+       let refreshTimer = null;
         const getToken = () => localStorage.getItem('realm_token');
 
         function login() {
