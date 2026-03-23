@@ -50,7 +50,7 @@ install_panel() {
 
     # 初始化鉴权与流量文件
     if [ ! -f "$PANEL_DIR/auth.json" ]; then
-        echo '{"username": "admin", "password": "admin"}' > "$PANEL_DIR/auth.json"
+        echo '{"username": "admin", "password": "admin", "title": "Realm Dashboard"}' > "$PANEL_DIR/auth.json"
     fi
     if [ ! -f "$PANEL_DIR/traffic.json" ]; then
         # 新增 quotas 和 disabled 字段用于流量熔断
@@ -142,7 +142,7 @@ install_panel() {
         </div>
         <div class="main-content">
             <div class="header">
-                <div style="font-size: 20px; font-weight: bold; color: #2c3e50;">Realm Dashboard</div>
+                <div id="panel-title-display" style="font-size: 20px; font-weight: bold; color: #2c3e50;">Realm Dashboard</div>
                 <div><span>状态: <span class="status-badge" id="status-badge">获取中</span></span> <button class="btn btn-danger btn-small" style="margin-left:15px;" onclick="logout()">退出登录</button></div>
             </div>
             <div class="content-body">
@@ -203,6 +203,11 @@ install_panel() {
                     <div class="node-grid" id="node-list"></div>
                 </div>
                 <div id="view-settings" class="view-section">
+                    <div class="card" style="max-width: 400px; margin-bottom: 20px;">
+                        <div class="card-title">修改面板名称</div>
+                        <div class="form-group"><label>自定义面板名称</label><input type="text" id="new-title" placeholder="如: Realm Dashboard"></div>
+                        <button class="btn btn-primary" onclick="changeTitle()">保存修改</button>
+                    </div>
                     <div class="card" style="max-width: 400px; margin-bottom: 20px;">
                         <div class="card-title">修改登录凭证</div>
                         <div class="form-group"><label>新用户名</label><input type="text" id="new-u"></div>
@@ -272,6 +277,9 @@ install_panel() {
 
         function loadData() {
             apiCall('/api/data', null, 'GET').then(d => {
+                document.getElementById('panel-title-display').innerText = d.title || 'Realm Dashboard';
+                if (!document.getElementById('new-title').value) document.getElementById('new-title').placeholder = d.title || 'Realm Dashboard';
+                
                 const badge = document.getElementById('status-badge');
                 if(d.is_running) {
                     badge.innerText = '运行中';
@@ -371,6 +379,12 @@ install_panel() {
                     </div>`;
                 document.getElementById('m-footer').innerHTML = `<button class="btn btn-small" style="background:#ddd;color:#333;" onclick="closeM()">关闭</button>`;
             });
+        }
+
+        function changeTitle() {
+            const nt = document.getElementById('new-title').value;
+            if(!nt) return showM("提示", "名称不能为空！");
+            apiCall('/api/sys', {action:'set_title', title: nt}).then(d=>{ showM("成功", d.msg); document.getElementById('new-title').value = ''; loadData(); });
         }
 
         function changeAuth() {
@@ -635,7 +649,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 c_data.append(round(t_data.get("hourly", {}).get(hr_str, 0) / 1073741824, 3))
                 
             is_active = (subprocess.run("systemctl is-active --quiet realm", shell=True).returncode == 0)
-            res = {"nodes": nodes, "total_gb": round(total_b / 1073741824, 3), "chart_labels": c_labels, "chart_data": c_data, "is_running": is_active, "sys_stat": get_sys_stat()}
+            
+            with data_lock:
+                try:
+                    with open(AUTH_FILE, 'r') as f: auth_data = json.load(f)
+                    panel_title = auth_data.get("title", "Realm Dashboard")
+                except: panel_title = "Realm Dashboard"
+            
+            res = {"nodes": nodes, "total_gb": round(total_b / 1073741824, 3), "chart_labels": c_labels, "chart_data": c_data, "is_running": is_active, "sys_stat": get_sys_stat(), "title": panel_title}
             self.send_response(200); self.send_header('Content-type', 'application/json'); self.end_headers()
             self.wfile.write(json.dumps(res).encode())
 
@@ -662,7 +683,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             elif data['action'] == 'restart': subprocess.run("systemctl restart realm", shell=True)
             elif data['action'] == 'auth':
                 with data_lock:
-                    with open(AUTH_FILE, 'w') as f: json.dump({"username": data['u'], "password": data['p']}, f)
+                    try:
+                        with open(AUTH_FILE, 'r') as f: auth_data = json.load(f)
+                    except: auth_data = {}
+                    auth_data["username"] = data['u']
+                    auth_data["password"] = data['p']
+                    with open(AUTH_FILE, 'w') as f: json.dump(auth_data, f)
+            elif data['action'] == 'set_title':
+                with data_lock:
+                    try:
+                        with open(AUTH_FILE, 'r') as f: auth_data = json.load(f)
+                    except: auth_data = {"username": "admin", "password": "admin"}
+                    auth_data["title"] = data['title']
+                    with open(AUTH_FILE, 'w') as f: json.dump(auth_data, f)
+                res = {"msg": "面板名称已更新"}
             elif data['action'] == 'backup':
                 with data_lock:
                     with open(CFG_PATH, 'r') as f: res = {"msg": "ok", "config": f.read()}
