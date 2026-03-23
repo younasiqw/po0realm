@@ -773,7 +773,7 @@ EOF
 install_realm() {
     if [ ! -f "$REALM_BIN_PATH" ]; then
         echo -e "${GREEN}选择安装方式:${PLAIN}"
-        echo -e " 1. 在线下载安装 (使用预设 v2.6.0 musl 链接)"
+        echo -e " 1. 在线下载安装 (使用预设 v2.9.2-2 musl 链接)"
         echo -e " 2. 本地文件安装 (请先将 $FILE_NAME 上传至 /tmp 目录)"
         echo -e " 3. 跳过当前 Realm 安装 (直接部署网页端，后续在网页内安装)"
         read -p "请输入选项 [1-3]: " install_method
