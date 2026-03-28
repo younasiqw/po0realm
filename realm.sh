@@ -14,7 +14,7 @@ SKYBLUE='\033[0;36m'
 PLAIN='\033[0m'
 
 # 变量定义
-DOWNLOAD_URL="https://github.com/zhboner/realm/releases/download/v2.6.0/realm-x86_64-unknown-linux-musl.tar.gz"
+DOWNLOAD_URL="https://github.com/zhboner/realm/releases/download/v2.9.2-2/realm-x86_64-unknown-linux-musl.tar.gz"
 FILE_NAME="realm-x86_64-unknown-linux-musl.tar.gz"
 LOCAL_PKG_PATH="/tmp/${FILE_NAME}"
 
@@ -22,6 +22,7 @@ REALM_BIN_PATH="/usr/local/bin/realm"
 REALM_CONFIG_PATH="/etc/realm/config.toml"
 REALM_SERVICE_PATH="/etc/systemd/system/realm.service"
 WORK_DIR="/etc/realm"
+BACKUP_DIR="/root/realmconfig"
 
 # 检查是否为 Root 用户
 [[ $EUID -ne 0 ]] && echo -e "${RED}错误: 必须使用 root 用户运行此脚本！${PLAIN}" && exit 1
@@ -32,7 +33,7 @@ install_realm() {
         echo -e "${YELLOW}检测到 Realm 已安装，跳过安装步骤。${PLAIN}"
     else
         echo -e "${GREEN}选择安装方式:${PLAIN}"
-        echo -e " 1. 在线下载安装 (使用预设 v2.6.0 musl 链接)"
+        echo -e " 1. 在线下载安装 (使用预设 v2.9.2-2 musl 链接)"
         echo -e " 2. 本地文件安装 (请先将 $FILE_NAME 上传至 /tmp 目录)"
         read -p "请输入选项 [1-2]: " install_method
 
@@ -211,10 +212,55 @@ delete_forward() {
     echo -e "${GREEN}规则已删除！${PLAIN}"
 }
 
-# 重启服务
+# 5. 重启服务
 restart_realm() {
     systemctl restart realm
     if [ $? -eq 0 ]; then echo -e "${GREEN}服务已重启生效。${PLAIN}"; else echo -e "${RED}服务重启失败！${PLAIN}"; fi
+}
+
+# 6. 备份节点信息
+backup_nodes() {
+    mkdir -p "$BACKUP_DIR"
+    if [ ! -f "$REALM_CONFIG_PATH" ]; then
+        echo -e "${RED}未找到 Realm 配置文件 (/etc/realm/config.toml)，请先添加节点！${PLAIN}"
+        return
+    fi
+    local backup_name="config_backup_$(date +%Y%m%d_%H%M%S).toml"
+    cp "$REALM_CONFIG_PATH" "$BACKUP_DIR/$backup_name"
+    echo -e "${GREEN}成功备份当前节点信息至: $BACKUP_DIR/$backup_name${PLAIN}"
+}
+
+# 7. 恢复节点信息
+restore_nodes() {
+    if [ ! -d "$BACKUP_DIR" ] || [ -z "$(ls -A "$BACKUP_DIR")" ]; then
+        echo -e "${RED}未在 $BACKUP_DIR 中找到任何备份文件！${PLAIN}"
+        return
+    fi
+    
+    echo -e "${SKYBLUE}==========================================${PLAIN}"
+    echo -e "请选择要恢复的备份文件："
+    local i=1
+    local files=()
+    for f in "$BACKUP_DIR"/*.toml; do
+        files[$i]=$f
+        echo -e " ${GREEN}${i}.${PLAIN} $(basename "$f")"
+        ((i++))
+    done
+    echo -e "${SKYBLUE}==========================================${PLAIN}"
+    
+    read -p "请输入对应的序号 (1-$((i-1))，按0取消): " sel
+    if [ "$sel" == "0" ]; then
+        echo -e "${YELLOW}已取消恢复操作。${PLAIN}"
+        return
+    fi
+    
+    if [[ "$sel" =~ ^[0-9]+$ ]] && [ "$sel" -ge 1 ] && [ "$sel" -lt $i ]; then
+        cp "${files[$sel]}" "$REALM_CONFIG_PATH"
+        restart_realm
+        echo -e "${GREEN}节点信息已成功恢复，且核心服务已自动重启生效！${PLAIN}"
+    else
+        echo -e "${RED}输入无效！${PLAIN}"
+    fi
 }
 
 # 显示状态
@@ -226,7 +272,7 @@ show_status() {
 show_menu() {
     clear
     echo -e "============================================"
-    echo -e "           Realm 转发管理脚本               "
+    echo -e "               Realm 转发管理脚本               "
     echo -e "============================================"
     show_status
     echo -e "--------------------------------------------"
@@ -236,9 +282,11 @@ show_menu() {
     echo -e "  4. 删除转发规则 (列表显示)"
     echo -e "  5. 查看当前配置"
     echo -e "  6. 重启 Realm 服务"
+    echo -e "  7. 备份节点信息"
+    echo -e "  8. 恢复节点信息"
     echo -e "  0. 退出脚本"
     echo -e "============================================"
-    read -p " 请输入选项 [0-6]: " num
+    read -p " 请输入选项 [0-8]: " num
     case "$num" in
         1) install_realm ;;
         2) uninstall_realm ;;
@@ -246,6 +294,8 @@ show_menu() {
         4) delete_forward ;;
         5) cat "$REALM_CONFIG_PATH" && read -p "按回车继续..." ;;
         6) restart_realm ;;
+        7) backup_nodes ;;
+        8) restore_nodes ;;
         0) exit 0 ;;
         *) echo -e "${RED}无效选项${PLAIN}" ;;
     esac
