@@ -125,8 +125,8 @@ install_panel() {
     <div id="login-wrapper">
         <div class="login-box">
             <h2>Realm 管理面板</h2>
-            <div class="form-group"><label>用户名</label><input type="text" id="username"></div>
-            <div class="form-group"><label>密码</label><input type="password" id="password"></div>
+            <div class="form-group"><label>用户名</label><input type="text" id="username" onkeydown="if(event.key === 'Enter') login()"></div>
+            <div class="form-group"><label>密码</label><input type="password" id="password" onkeydown="if(event.key === 'Enter') login()"></div>
             <button class="btn btn-primary" onclick="login()">✈开始起飞</button>
             <p id="login-error" style="color: var(--danger-color); margin-top: 15px; display: none;">凭证错误！</p>
         </div>
