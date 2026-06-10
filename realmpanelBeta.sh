@@ -3,6 +3,7 @@
 # ==================================================
 # Realm 一键转发管理脚本 (Web面板 终极完全体)
 # 说明: 真实TOML读写、真实TCP测速、nftables精准单端口流量、Token鉴权、流量阈值熔断
+# 修复: 适配老版本Linux内核/nftables，解决流量统计为0的Bug
 # ==================================================
 
 RED='\033[0;31m'
@@ -236,7 +237,7 @@ install_panel() {
 
     <script>
         let chartInst = null;
-       let refreshTimer = null;
+        let refreshTimer = null;
         const getToken = () => localStorage.getItem('realm_token');
 
         function login() {
@@ -585,13 +586,27 @@ def traffic_daemon():
             
             bytes_added = {}
             try:
-                out = subprocess.check_output("nft -nn reset rules inet realm_table realm_acct 2>/dev/null", shell=True).decode()
+                # ==============================================================
+                #  完美兼容老旧内核/nftables的非阻塞式记账逻辑
+                # ==============================================================
+                # 1. 兼容老系统：使用 list 读取，且加上 -nn 防止英文解析
+                out = subprocess.check_output("nft -nn list chain inet realm_table realm_acct 2>/dev/null", shell=True).decode()
+                
+                # 2. 手动清空链，达到重置流量计数器的效果
+                os.system("nft flush chain inet realm_table realm_acct 2>/dev/null")
+                
+                # 3. 解析刚才读到的流量，并动态把纯净的规则加回去继续记账
                 for line in out.split('\n'):
                     m = re.search(r'(?:dport|sport)\s+(\d+)\s+counter\s+packets\s+\d+\s+bytes\s+(\d+)', line)
                     if m:
                         p = m.group(1)
-                        b_count = int(m.group(2))
-                        bytes_added[p] = bytes_added.get(p, 0) + b_count
+                        bytes_added[p] = bytes_added.get(p, 0) + int(m.group(2))
+                        
+                        # 重新生成干净的（从 0 开始的）计数器规则
+                        if 'tcp sport' in line: os.system(f"nft add rule inet realm_table realm_acct tcp sport {p} counter 2>/dev/null")
+                        if 'udp sport' in line: os.system(f"nft add rule inet realm_table realm_acct udp sport {p} counter 2>/dev/null")
+                        if 'tcp dport' in line: os.system(f"nft add rule inet realm_table realm_acct tcp dport {p} counter 2>/dev/null")
+                        if 'udp dport' in line: os.system(f"nft add rule inet realm_table realm_acct udp dport {p} counter 2>/dev/null")
             except Exception: pass
             
             hour_total = 0
