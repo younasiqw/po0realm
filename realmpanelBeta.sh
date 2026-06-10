@@ -585,7 +585,7 @@ def traffic_daemon():
             
             bytes_added = {}
             try:
-                out = subprocess.check_output("nft reset rules inet realm_table realm_acct 2>/dev/null", shell=True).decode()
+                out = subprocess.check_output("nft -nn reset rules inet realm_table realm_acct 2>/dev/null", shell=True).decode()
                 for line in out.split('\n'):
                     m = re.search(r'(?:dport|sport)\s+(\d+)\s+counter\s+packets\s+\d+\s+bytes\s+(\d+)', line)
                     if m:
