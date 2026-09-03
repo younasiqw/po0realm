@@ -21,6 +21,9 @@ DOWNLOAD_URL="https://github.com/zhboner/realm/releases/download/v2.9.2-2/realm-
 
 [[ $EUID -ne 0 ]] && echo -e "${RED}错误: 必须使用 root 用户运行此脚本！${PLAIN}" && exit 1
 
+# 终端退格键兼容修复
+stty erase '^?' 2>/dev/null
+
 # 检查基础依赖
 check_dependencies() {
     local need_install=0
@@ -55,7 +58,7 @@ zero_copy = true
 
 [[endpoints]]
 listen = "[::]:20000"
-remote = "127.0.0.1:22000"
+remote = "127.0.0.1:22"
 # remark: Realm示例
 EOF
     elif ! grep -q "\[\[endpoints\]\]" "$REALM_CONFIG_PATH"; then
@@ -63,7 +66,7 @@ EOF
 
 [[endpoints]]
 listen = "[::]:20000"
-remote = "127.0.0.1:22000"
+remote = "127.0.0.1:22"
 # remark: Realm示例
 EOF
     fi
@@ -79,7 +82,7 @@ install_realm() {
     echo -e " 2. 本地包安装 (需预先将压缩包上传至 /tmp/realm.tar.gz)"
     echo -e " 0. 返回主菜单"
     echo -e "${SKYBLUE}==========================================${PLAIN}"
-    read -p "请输入选项 [0-2]: " method
+    read -e -p "请输入选项 [0-2]: " method
     case "$method" in
         1)
             echo -e "${YELLOW}正在下载 Realm 二进制文件...${PLAIN}"
@@ -134,7 +137,7 @@ EOF
 
 # 彻底卸载 Realm
 uninstall_realm() {
-    read -p "确定要彻底卸载 Realm 及其所有配置文件吗？[y/N]: " confirm
+    read -e -p "确定要彻底卸载 Realm 及其所有配置文件吗？[y/N]: " confirm
     if [[ "$confirm" =~ ^[yY]$ ]]; then
         systemctl stop realm >/dev/null 2>&1
         systemctl disable realm >/dev/null 2>&1
@@ -188,14 +191,14 @@ EOF
 # 添加转发规则
 add_node() {
     echo -e "${SKYBLUE}>>> 添加新的端口转发规则${PLAIN}"
-    read -p "请输入备注信息 (如: 香港落地01): " remark
+    read -e -p "请输入备注信息 (如: 香港落地01): " remark
     remark=${remark:-"未命名节点"}
 
-    read -p "请输入本地监听入口地址 (默认: [::]): " in_ip
+    read -e -p "请输入本地监听入口地址 (默认: [::]): " in_ip
     in_ip=${in_ip:-"[::]"}
 
     while true; do
-        read -p "请输入本地监听端口 (1-65535): " in_port
+        read -e -p "请输入本地监听端口 (1-65535): " in_port
         if [[ "$in_port" =~ ^[0-9]+$ ]] && [ "$in_port" -ge 1 ] && [ "$in_port" -le 65535 ]; then
             break
         else
@@ -204,13 +207,13 @@ add_node() {
     done
 
     while true; do
-        read -p "请输入目标落地地址 (IP或域名): " out_ip
+        read -e -p "请输入目标落地地址 (IP或域名): " out_ip
         [ -n "$out_ip" ] && break
         echo -e "${RED}目标地址不能为空！${PLAIN}"
     done
 
     while true; do
-        read -p "请输入目标端口 (1-65535): " out_port
+        read -e -p "请输入目标端口 (1-65535): " out_port
         if [[ "$out_port" =~ ^[0-9]+$ ]] && [ "$out_port" -ge 1 ] && [ "$out_port" -le 65535 ]; then
             break
         else
@@ -237,11 +240,15 @@ edit_node() {
     echo -e "${SKYBLUE}>>> 当前转发规则列表${PLAIN}"
     list_nodes
     echo ""
-    read -p "请输入要修改的规则序号 (ID, 输入0取消): " edit_id
+    read -e -p "请输入要修改的规则序号 (ID, 输入0取消): " edit_id
     [[ "$edit_id" == "0" || -z "$edit_id" ]] && return
 
     python3 - <<EOF
 import sys
+try:
+    import readline
+except ImportError:
+    pass
 
 CFG_PATH = "$REALM_CONFIG_PATH"
 with open(CFG_PATH, 'r') as f:
@@ -304,7 +311,7 @@ del_node() {
     echo -e "${SKYBLUE}>>> 当前转发规则列表${PLAIN}"
     list_nodes
     echo ""
-    read -p "请输入要删除的规则序号 (ID, 输入0取消): " del_id
+    read -e -p "请输入要删除的规则序号 (ID, 输入0取消): " del_id
     [[ "$del_id" == "0" || -z "$del_id" ]] && return
 
     python3 - <<EOF
@@ -400,12 +407,12 @@ tcping_menu() {
     echo -e " 3. 自定义 IP/域名与端口测试"
     echo -e " 0. 返回主菜单"
     echo -e "${SKYBLUE}==========================================${PLAIN}"
-    read -p "请输入选项 [0-3]: " opt
+    read -e -p "请输入选项 [0-3]: " opt
     case "$opt" in
         1)
             list_nodes
             echo ""
-            read -p "请输入要测试的规则 ID: " nid
+            read -e -p "请输入要测试的规则 ID: " nid
             [ -z "$nid" ] && return
             local port=$(python3 -c "
 import sys
@@ -427,7 +434,7 @@ except: pass
         2)
             list_nodes
             echo ""
-            read -p "请输入要测试的规则 ID: " nid
+            read -e -p "请输入要测试的规则 ID: " nid
             [ -z "$nid" ] && return
             local remote_info=$(python3 -c "
 import sys
@@ -451,8 +458,8 @@ except: pass
             fi
             ;;
         3)
-            read -p "请输入目标 IP 或 域名: " c_ip
-            read -p "请输入目标端口: " c_port
+            read -e -p "请输入目标 IP 或 域名: " c_ip
+            read -e -p "请输入目标端口: " c_port
             if [[ -n "$c_ip" && "$c_port" =~ ^[0-9]+$ ]]; then
                 run_tcping "$c_ip" "$c_port" 4
             else
@@ -486,7 +493,7 @@ restore_nodes() {
         ((i++))
     done
     echo ""
-    read -p "请输入恢复序号 (1-$((i-1)), 输入0取消): " s_id
+    read -e -p "请输入恢复序号 (1-$((i-1)), 输入0取消): " s_id
     [[ "$s_id" == "0" || -z "$s_id" ]] && return
     if [[ "$s_id" =~ ^[0-9]+$ ]] && [ "$s_id" -ge 1 ] && [ "$s_id" -lt $i ]; then
         cp "${files[$s_id]}" "$REALM_CONFIG_PATH"
@@ -509,7 +516,7 @@ service_control() {
     echo -e " 4. 查看 Systemd 详细日志 (按 q 退出日志)"
     echo -e " 0. 返回主菜单"
     echo -e "${SKYBLUE}==========================================${PLAIN}"
-    read -p "请输入选项 [0-4]: " s_opt
+    read -e -p "请输入选项 [0-4]: " s_opt
     case "$s_opt" in
         1) systemctl start realm && echo -e "${GREEN}已启动！${PLAIN}" ;;
         2) systemctl stop realm && echo -e "${YELLOW}已停止！${PLAIN}" ;;
@@ -528,7 +535,7 @@ main_menu() {
     while true; do
         clear
         echo -e "${SKYBLUE}======================================================${PLAIN}"
-        echo -e "${BOLD}                    Realm 端口转发管理面板                ${PLAIN}"
+        echo -e "${BOLD}             Realm 端口转发管理面板 (纯终端版)        ${PLAIN}"
         echo -e "${SKYBLUE}======================================================${PLAIN}"
         
         # 状态展示
@@ -559,7 +566,7 @@ main_menu() {
         echo -e "   ${GREEN}10.${PLAIN} 彻底卸载 Realm"
         echo -e "   ${GREEN}0.${PLAIN} 退出脚本"
         echo -e "${SKYBLUE}======================================================${PLAIN}"
-        read -p " 请输入选项 [0-10]: " choice
+        read -e -p " 请输入选项 [0-10]: " choice
 
         case "$choice" in
             1) clear; echo -e "${SKYBLUE}>>> 转发规则列表${PLAIN}"; list_nodes ;;
