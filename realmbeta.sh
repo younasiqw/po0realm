@@ -53,6 +53,18 @@ no_tcp = false
 use_udp = true
 zero_copy = true
 
+[[endpoints]]
+listen = "[::]:20000"
+remote = "127.0.0.1:22000"
+# remark: Realm示例
+EOF
+    elif ! grep -q "\[\[endpoints\]\]" "$REALM_CONFIG_PATH"; then
+        cat >> "$REALM_CONFIG_PATH" <<EOF
+
+[[endpoints]]
+listen = "[::]:20000"
+remote = "127.0.0.1:22000"
+# remark: Realm示例
 EOF
     fi
 }
