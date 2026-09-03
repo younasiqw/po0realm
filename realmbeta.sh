@@ -528,7 +528,7 @@ main_menu() {
     while true; do
         clear
         echo -e "${SKYBLUE}======================================================${PLAIN}"
-        echo -e "${BOLD}             Realm 端口转发管理面板 (纯终端版)        ${PLAIN}"
+        echo -e "${BOLD}                    Realm 端口转发管理面板                ${PLAIN}"
         echo -e "${SKYBLUE}======================================================${PLAIN}"
         
         # 状态展示
